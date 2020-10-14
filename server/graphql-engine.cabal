@@ -473,6 +473,10 @@ library
                      , Hasura.SQL.Tsql.ToQuery
                      , Hasura.SQL.Tsql.Types
                      , Hasura.SQL.Tsql.Plan
+                     , Hasura.SQL.BigQuery.FromIr
+                     , Hasura.SQL.BigQuery.ToQuery
+                     , Hasura.SQL.BigQuery.Types
+                     , Hasura.SQL.BigQuery.Plan
                      , Hasura.Tracing
                      , Network.URI.Extended
                      , Network.Wai.Extended
