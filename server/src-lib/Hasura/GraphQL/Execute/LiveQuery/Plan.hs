@@ -25,6 +25,7 @@ module Hasura.GraphQL.Execute.LiveQuery.Plan
   ) where
 
 import qualified Hasura.SQL.Tsql.Plan as Tsql
+import qualified Hasura.SQL.BigQuery.Plan as BigQuery
 
 import           Hasura.Prelude
 import           Hasura.Session
@@ -290,7 +291,8 @@ buildLiveQueryPlan
   -> InsOrdHashMap G.Name (SubscriptionRootField UnpreparedValue)
   -> m (LiveQueryPlan, Maybe ReusableLiveQueryPlan)
 buildLiveQueryPlan pgExecCtx userInfo unpreparedAST = do
-  liftIO (Tsql.test unpreparedAST)
+  -- liftIO (Tsql.test unpreparedAST)
+  liftIO (BigQuery.test unpreparedAST)
   -- ((resolvedASTs, (queryVariableValues, syntheticVariableValues)), finalReusability) <-
   --   GV.runReusabilityTWith initialReusability . flip runStateT mempty $
   --     fmap Map.fromList . for (toList fields) $ \field -> case GV._fName field of
