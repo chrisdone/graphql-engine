@@ -74,6 +74,8 @@ fromExpression =
     ExistsExpression select -> "EXISTS (" <+> fromSelect select <+> ")"
     IsNullExpression expression ->
       "(" <+> fromExpression expression <+> ") IS NULL"
+    IsNotNullExpression expression ->
+      "(" <+> fromExpression expression <+> ") IS NOT NULL"
     ColumnExpression fieldName -> fromFieldName fieldName
     EqualExpression x y ->
       "(" <+> fromExpression x <+> ") = (" <+> fromExpression y <+> ")"
