@@ -105,6 +105,7 @@ library
   build-depends:       base
                      , bifunctors
                      , witherable
+                     , http-conduit
                      , validation
                      , lifted-base
                      , pg-client

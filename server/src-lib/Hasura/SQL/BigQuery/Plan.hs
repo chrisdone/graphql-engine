@@ -5,13 +5,18 @@ module Hasura.SQL.BigQuery.Plan
   , planNoPlanMap
   , planMultiplex
   , test
+  , runSelect
   ) where
 
 import           Control.Applicative
 import           Control.Monad.Trans
 import           Control.Monad.Trans.State.Strict
 import           Control.Monad.Validate
+import           Data.Aeson
 import           Data.Bifunctor
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as S8
+import qualified Data.ByteString.Lazy as L
 import           Data.Functor
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -20,20 +25,23 @@ import           Data.Int
 import           Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
+import           Data.Void
 import qualified Database.ODBC.SQLServer as Odbc
 import qualified Hasura.GraphQL.Context as Graphql
 import qualified Hasura.GraphQL.Execute.Query as Query
 import qualified Hasura.GraphQL.Parser.Column as Graphql
 import qualified Hasura.GraphQL.Parser.Schema as PS
-import qualified Hasura.SQL.DML as Sql
-import qualified Hasura.SQL.BigQuery.FromIr as FromIr
 import qualified Hasura.SQL.BigQuery.FromIr as BigQuery
+import qualified Hasura.SQL.BigQuery.FromIr as FromIr
 import           Hasura.SQL.BigQuery.ToQuery as BigQuery
 import           Hasura.SQL.BigQuery.Types as BigQuery
+import qualified Hasura.SQL.DML as Sql
 import qualified Hasura.SQL.Types as Sql
 import qualified Hasura.SQL.Value as Sql
 import qualified Language.GraphQL.Draft.Syntax as G
+import           Network.HTTP.Conduit
 import           Prelude
+import           System.Environment
 
 --------------------------------------------------------------------------------
 -- Testing
@@ -82,11 +90,53 @@ test i =
           pure x
 
 --------------------------------------------------------------------------------
+-- Run a select query against BigQuery
+
+runSelect :: Select -> IO ()
+runSelect select = do
+  bigqueryaccesstoken <- getEnvUnline "BIGQUERYACCESSTOKEN"
+  bigqueryapitoken <- getEnvUnline "BIGQUERYAPITOKEN"
+  bigqueryprojectname <- getEnvUnline "BIGQUERYPROJECTNAME"
+  req <-
+    parseUrl
+      ("https://content-bigquery.googleapis.com/bigquery/v2/projects/" <>
+       bigqueryprojectname <>
+       "/queries?alt=json&key=" <>
+       bigqueryapitoken)
+  mgr <- newManager tlsManagerSettings
+  let body' = "{\"query\":\"select * from chinook.Artist\"}"
+      body =
+        encode
+          (object
+             [ "query" .= Odbc.renderQuery (toQueryFlat (fromSelect select))
+             , "useLegacySql" .= False -- Important, it makes `quotes` work properly.
+             ])
+  L.putStrLn ("Request body:\n" <> body)
+  let request =
+        req
+          { requestHeaders =
+              [ ("Authorization", "Bearer " <> S8.pack bigqueryaccesstoken)
+              , ("Content-Type", "application/json")
+              , ("User-Agent", "curl/7.54")
+              ]
+          , checkResponse = \_ resp -> pure ()
+          , method = "POST"
+          , requestBody = RequestBodyLBS body
+          }
+  print request
+  httpLbs request mgr >>= L.putStr . responseBody
+  where
+    getEnvUnline key = do
+      value <- fmap (concat . take 1 . lines) (getEnv key)
+      print (key, value)
+      pure value
+
+--------------------------------------------------------------------------------
 -- Top-level planner
 
 -- | Plan a query without prepare/exec.
 planNoPlan ::
-     Graphql.SubscriptionRootField Graphql.UnpreparedValue
+     Graphql.RootField (Graphql.QueryDB Graphql.UnpreparedValue) void1 void2 void3
   -> Either PrepareError Select
 planNoPlan unpreparedRoot = do
   rootField <- Query.traverseQueryRootField prepareValueNoPlan unpreparedRoot
