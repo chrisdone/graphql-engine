@@ -3,13 +3,17 @@ module Hasura.GraphQL.Explain
   , GQLExplain
   ) where
 
-import qualified Data.Aeson                             as J
-import qualified Data.Aeson.Casing                      as J
-import qualified Data.Aeson.TH                          as J
-import qualified Data.HashMap.Strict                    as Map
-import qualified Data.HashMap.Strict.InsOrd             as OMap
-import qualified Database.PG.Query                      as Q
-import qualified Language.GraphQL.Draft.Syntax          as G
+import           Hasura.SQL.BigQuery.ToQuery as BigQuery
+import Hasura.SQL.BigQuery.Plan as BigQuery
+import qualified Data.Aeson as J
+import qualified Data.Aeson.Casing as J
+import qualified Data.Aeson.TH as J
+import qualified Data.HashMap.Strict as Map
+import qualified Data.HashMap.Strict.InsOrd as OMap
+import           Data.Text (Text)
+import qualified Data.Text as T
+import qualified Database.PG.Query as Q
+import qualified Language.GraphQL.Draft.Syntax as G
 
 import           Hasura.EncJSON
 import           Hasura.GraphQL.Context
@@ -21,14 +25,17 @@ import           Hasura.Session
 import           Hasura.SQL.Types
 import           Hasura.SQL.Value
 
-import qualified Hasura.GraphQL.Execute                 as E
-import qualified Hasura.GraphQL.Execute.Inline          as E
-import qualified Hasura.GraphQL.Execute.LiveQuery       as E
-import qualified Hasura.GraphQL.Execute.Query           as E
+import qualified Hasura.SQL.BigQuery.Plan as BigQuery
+
+import qualified Hasura.GraphQL.Execute as E
+import qualified Hasura.GraphQL.Execute.Inline as E
+import qualified Hasura.GraphQL.Execute.LiveQuery as E
+import qualified Hasura.GraphQL.Execute.Query as E
 import qualified Hasura.GraphQL.Transport.HTTP.Protocol as GH
-import qualified Hasura.RQL.DML.RemoteJoin              as RR
-import qualified Hasura.RQL.DML.Select                  as DS
-import qualified Hasura.SQL.DML                         as S
+import qualified Hasura.RQL.DML.RemoteJoin as RR
+import qualified Hasura.RQL.DML.Select as DS
+import qualified Hasura.SQL.DML as S
+import qualified Database.ODBC.SQLServer as Odbc
 
 data GQLExplain
   = GQLExplain
@@ -72,12 +79,21 @@ resolveUnpreparedValue userInfo = \case
 -- NOTE: This function has a 'MonadTrace' constraint in master, but we don't need it
 -- here. We should evaluate if we need it here.
 explainQueryField
-  :: (MonadError QErr m, MonadTx m)
+  :: (MonadError QErr m, MonadTx m, MonadIO m)
   => UserInfo
   -> G.Name
   -> QueryRootField UnpreparedValue
   -> m FieldPlan
 explainQueryField userInfo fieldName rootField = do
+  liftIO (print (BigQuery.planNoPlan rootField))
+  liftIO (putStrLn (either show (
+                           T.unpack .Odbc.renderQuery .toQueryPretty   .fromSelect
+
+                                          ) (BigQuery.planNoPlan rootField)))
+  {-liftIO ((
+              case BigQuery.planNoPlan rootField of
+                Left _ -> pure ()
+                Right select -> BigQuery.runSelect select))-}
   resolvedRootField <- E.traverseQueryRootField (resolveUnpreparedValue userInfo) rootField
   case resolvedRootField of
     RFRemote _ -> throw400 InvalidParams "only hasura queries can be explained"

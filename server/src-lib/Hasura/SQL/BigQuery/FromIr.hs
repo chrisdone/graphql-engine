@@ -117,7 +117,7 @@ mkSQLSelect jsonAggSelect annSimpleSel =
 
 -- | Convert from the IR database query into a select.
 fromRootField ::
-     Graphql.RootField (Graphql.QueryDB Expression) Void void Void
+     Graphql.RootField (Graphql.QueryDB Expression) void1 void2 void3
   -> FromIr Select
 fromRootField =
   \case
