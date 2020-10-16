@@ -218,15 +218,7 @@ fromFor :: For -> Printer
 fromFor =
   \case
     NoFor -> ""
-    JsonFor ForJson {jsonCardinality, jsonRoot = root} ->
-      "FOR JSON PATH" <+>
-      case jsonCardinality of
-        JsonArray -> ""
-        JsonSingleton ->
-          ", WITHOUT_ARRAY_WRAPPER" <+>
-          case root of
-            NoRoot -> ""
-            Root text -> "ROOT(" <+> QueryPrinter (toSql text) <+> ")"
+    JsonFor ForJson {jsonCardinality, jsonRoot = root} -> ""
 
 fromProjection :: Projection -> Printer
 fromProjection =
@@ -310,7 +302,7 @@ fromAliased Aliased {..} =
   ((" AS " <+>) . fromNameText) aliasedAlias
 
 fromNameText :: Text -> Printer
-fromNameText t = QueryPrinter (rawUnescapedText ("[" <> t <> "]"))
+fromNameText t = QueryPrinter (rawUnescapedText ("`" <> t <> "`"))
 
 trueExpression :: Expression
 trueExpression = ValueExpression (BoolValue True)
