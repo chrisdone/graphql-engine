@@ -42,10 +42,6 @@ instance IsString Printer where
 (<+>) :: Printer -> Printer -> Printer
 (<+>) x y = SeqPrinter [x,y]
 
-(<+>?) :: Printer -> Maybe Printer -> Printer
-(<+>?) x Nothing = x
-(<+>?) x (Just y) = SeqPrinter [x,y]
-
 --------------------------------------------------------------------------------
 -- Printer generators
 
@@ -83,6 +79,7 @@ fromExpression =
       "(" <+> fromExpression x <+> ") != (" <+> fromExpression y <+> ")"
     ToStringExpression e -> "CONCAT(" <+> fromExpression e <+> ", '')"
     SelectExpression s -> "(" <+> IndentPrinter 1 (fromSelect s) <+> ")"
+    ArrayExpression e -> "ARRAY(" <+> IndentPrinter 6 (fromExpression e) <+> ")"
     OpExpression op x y ->
       "(" <+>
       fromExpression x <+>
@@ -126,11 +123,11 @@ fromSelect Select {..} =
     , SepByPrinter
         NewlinePrinter
         (map
-           (\Join {..} ->
+           (\LeftOuterJoin {..} ->
               SeqPrinter
-                [ "OUTER APPLY ("
+                [ "LEFT OUTER JOIN ("
                 , IndentPrinter 13 (fromJoinSource joinSource)
-                , ") "
+                , ") ON (true) "
                 , NewlinePrinter
                 , "AS "
                 , fromJoinAlias joinJoinAlias
@@ -138,7 +135,6 @@ fromSelect Select {..} =
            selectJoins)
     , fromWhere selectWhere
     , fromOrderBys selectTop selectOffset selectOrderBy
-    , fromFor selectFor
     ]
 
 fromJoinSource :: JoinSource -> Printer
@@ -157,7 +153,6 @@ fromReselect Reselect {..} =
         (SepByPrinter
            ("," <+> NewlinePrinter)
            (map fromProjection (toList reselectProjections)))
-    , fromFor reselectFor
     , fromWhere reselectWhere
     ]
 
@@ -213,14 +208,8 @@ fromNullsOrder fieldName =
 
 fromJoinAlias :: JoinAlias -> Printer
 fromJoinAlias JoinAlias {..} =
-  fromNameText joinAliasEntity <+>?
-  fmap (\name -> "(" <+> fromNameText name <+> ")") joinAliasField
-
-fromFor :: For -> Printer
-fromFor =
-  \case
-    NoFor -> ""
-    JsonFor ForJson {jsonCardinality, jsonRoot = root} -> ""
+  fromNameText joinAliasEntity--  <+>?
+  -- fmap (\name -> "(" <+> fromNameText name <+> ")") joinAliasField
 
 fromProjection :: Projection -> Printer
 fromProjection =

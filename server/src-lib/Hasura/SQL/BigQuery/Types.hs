@@ -68,7 +68,7 @@ data Projection
   | StarProjection
   deriving (Eq, Show)
 
-data Join = Join
+data Join = LeftOuterJoin
   { joinSource :: !JoinSource
   , joinJoinAlias :: !JoinAlias
   } deriving (Eq, Show)
@@ -80,7 +80,7 @@ data JoinSource
 
 data JoinAlias = JoinAlias
   { joinAliasEntity :: Text
-  , joinAliasField :: Maybe Text
+  -- , joinAliasField :: Maybe Text
   } deriving (Eq, Show)
 
 newtype Where =
@@ -114,6 +114,7 @@ data Expression
   | NotExpression Expression
   | ExistsExpression Select
   | SelectExpression Select
+  | ArrayExpression Expression
   | IsNullExpression Expression
   | IsNotNullExpression Expression
   | ColumnExpression FieldName

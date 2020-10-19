@@ -29,7 +29,6 @@ import           Data.Sequence (Seq)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Read as T
-import           Data.Void
 import qualified Database.ODBC.SQLServer as Odbc
 import qualified Hasura.GraphQL.Context as Graphql
 import qualified Hasura.RQL.DML.Select as DS
@@ -64,6 +63,7 @@ data Error
   | DistinctIsn'tSupported
   | ConnectionsNotSupported
   | ActionsNotSupported
+  | RootNotSupported
   deriving (Show, Eq)
 
 -- | The base monad used throughout this module for all conversion
@@ -127,6 +127,7 @@ fromRootField =
     Graphql.RFDB (Graphql.QDBConnection {}) ->
       refute (pure ConnectionsNotSupported)
     Graphql.RFAction {} -> refute (pure ActionsNotSupported)
+    _ -> refute (pure RootNotSupported)
 
 --------------------------------------------------------------------------------
 -- Top-level exported functions
@@ -342,7 +343,7 @@ unfurlAnnOrderByElement =
         (pure
            UnfurledJoin
              { unfurledJoin =
-                 Join
+                 LeftOuterJoin
                    { joinSource =
                        JoinSelect
                          Select
@@ -357,7 +358,8 @@ unfurlAnnOrderByElement =
                            , selectOffset = Nothing
                            }
                    , joinJoinAlias =
-                       JoinAlias {joinAliasEntity, joinAliasField = Nothing}
+                       JoinAlias {joinAliasEntity-- , joinAliasField = Nothing
+                                 }
                    }
              , unfurledObjectTableAlias = Just (table, EntityAlias joinAliasEntity)
              })
@@ -385,7 +387,7 @@ unfurlAnnOrderByElement =
         (pure
            (UnfurledJoin
               { unfurledJoin =
-                  Join
+                  LeftOuterJoin
                     { joinSource =
                         JoinSelect
                           Select
@@ -408,7 +410,8 @@ unfurlAnnOrderByElement =
                             , selectOffset = Nothing
                             }
                     , joinJoinAlias =
-                        JoinAlias {joinAliasEntity, joinAliasField = Nothing}
+                        JoinAlias {joinAliasEntity-- , joinAliasField = Nothing
+                                  }
                     }
               , unfurledObjectTableAlias = Nothing
               }))
@@ -431,7 +434,7 @@ fromQualifiedTable qualifiedObject = do
     (FromQualifiedTable
        (Aliased
           { aliasedThing =
-              TableName {tableName = qname, tableNameSchema = schemaName}
+              TableName {tableName = qname, tableNameSchema = "chinook"{-schemaName-}}
           , aliasedAlias = alias
           }))
   where
@@ -611,8 +614,15 @@ fromAnnFieldsG existingJoins stringifyNumbers (Ir.FieldName name, field) =
         (fromObjectRelationSelectG existingJoins objectRelationSelectG)
     Ir.AFArrayRelation arraySelectG ->
       fmap
-        (\aliasedThing ->
-           JoinFieldSource (Aliased {aliasedThing, aliasedAlias = name}))
+        (\case
+           Left select ->
+             ExpressionFieldSource
+               Aliased
+                 { aliasedThing = ArrayExpression (SelectExpression select)
+                 , aliasedAlias = name
+                 }
+           Right aliasedThing ->
+             JoinFieldSource (Aliased {aliasedThing, aliasedAlias = name}))
         (fromArraySelectG arraySelectG)
     -- TODO:
     -- Vamshi said to ignore these three for now:
@@ -659,7 +669,7 @@ fieldSourceProjections =
                   -- Basically a cast, to ensure that SQL Server won't
                   -- double-encode the JSON but will "pass it through"
                   -- untouched.
-                  JsonQueryExpression
+                  {-JsonQueryExpression-}
                     (ColumnExpression
                        (joinAliasToField
                           (joinJoinAlias (aliasedThing aliasedJoin))))
@@ -670,7 +680,7 @@ joinAliasToField :: JoinAlias -> FieldName
 joinAliasToField JoinAlias {..} =
   FieldName
     { fieldNameEntity = joinAliasEntity
-    , fieldName = fromMaybe (error "TODO: Eliminate this case. joinAliasToField") joinAliasField
+    , fieldName = "root" -- TODO: {-fromMaybe (error "TODO: Eliminate this case. joinAliasToField") joinAliasField-}
     }
 
 fieldSourceJoin :: FieldSource -> Maybe Join
@@ -703,7 +713,8 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
        alias <- lift (generateEntityAlias (ObjectRelationTemplate fieldName))
        pure
          JoinAlias
-           {joinAliasEntity = alias, joinAliasField = pure jsonFieldName}
+           {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
+           }
   let selectFor =
         JsonFor ForJson {jsonCardinality = JsonSingleton, jsonRoot = NoRoot}
   filterExpression <- local (const entityAlias) (fromAnnBoolExp tableFilter)
@@ -711,7 +722,7 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
     Right selectFrom -> do
       foreignKeyConditions <- fromMapping selectFrom mapping
       pure
-        Join
+        LeftOuterJoin
           { joinJoinAlias
           , joinSource =
               JoinSelect
@@ -729,7 +740,7 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
           }
     Left _entityAlias ->
       pure
-        Join
+        LeftOuterJoin
           { joinJoinAlias
           , joinSource =
               JoinReselect
@@ -758,13 +769,13 @@ lookupTableFrom existingJoins tableFrom = do
     Just entityAlias -> pure (Left entityAlias)
     Nothing -> fmap Right (fromQualifiedTable tableFrom)
 
-fromArraySelectG :: Ir.ArraySelectG Expression -> ReaderT EntityAlias FromIr Join
+fromArraySelectG :: Ir.ArraySelectG Expression -> ReaderT EntityAlias FromIr (Either Select Join)
 fromArraySelectG =
   \case
     Ir.ASSimple arrayRelationSelectG ->
-      fromArrayRelationSelectG arrayRelationSelectG
+      fmap Left (fromArrayRelationSelectG arrayRelationSelectG)
     Ir.ASAggregate arrayAggregateSelectG ->
-      fromArrayAggregateSelectG arrayAggregateSelectG
+      fmap Right (fromArrayAggregateSelectG arrayAggregateSelectG)
     select@Ir.ASConnection {} ->
       refute (pure (UnsupportedArraySelect select))
 
@@ -780,10 +791,11 @@ fromArrayAggregateSelectG annRelationSelectG = do
          select {selectWhere = Where foreignKeyConditions <> selectWhere select}
   alias <- lift (generateEntityAlias (ArrayAggregateTemplate fieldName))
   pure
-    Join
+    LeftOuterJoin
       { joinJoinAlias =
           JoinAlias
-            {joinAliasEntity = alias, joinAliasField = pure jsonFieldName}
+            {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
+            }
       , joinSource = JoinSelect joinSelect
       }
   where
@@ -792,24 +804,25 @@ fromArrayAggregateSelectG annRelationSelectG = do
                           , aarAnnSelect = annSelectG
                           } = annRelationSelectG
 
-fromArrayRelationSelectG :: Ir.ArrayRelationSelectG Expression -> ReaderT EntityAlias FromIr Join
+fromArrayRelationSelectG :: Ir.ArrayRelationSelectG Expression -> ReaderT EntityAlias FromIr Select
 fromArrayRelationSelectG annRelationSelectG = do
-  fieldName <- lift (fromRelName aarRelationshipName)
+  {-fieldName <- lift (fromRelName aarRelationshipName)-}
   select <- lift (fromSelectRows annSelectG)
   joinSelect <-
     do foreignKeyConditions <- fromMapping (selectFrom select) mapping
        pure
          select {selectWhere = Where foreignKeyConditions <> selectWhere select}
-  alias <- lift (generateEntityAlias (ArrayRelationTemplate fieldName))
+  {-alias <- lift (generateEntityAlias (ArrayRelationTemplate fieldName))-}
   pure
-    Join
+    joinSelect
+    {-Join
       { joinJoinAlias =
           JoinAlias
             {joinAliasEntity = alias, joinAliasField = pure jsonFieldName}
       , joinSource = JoinSelect joinSelect
-      }
+      }-}
   where
-    Ir.AnnRelationSelectG { aarRelationshipName
+    Ir.AnnRelationSelectG { aarRelationshipName = _
                           , aarColumnMapping = mapping :: HashMap Sql.PGCol Sql.PGCol
                           , aarAnnSelect = annSelectG
                           } = annRelationSelectG

@@ -333,12 +333,12 @@ multiplexRootReselect rootReselect =
             , aliasedAlias = rowAlias
             }
     , selectJoins =
-        [ Join
+        [ LeftOuterJoin
             { joinSource = JoinReselect rootReselect
             , joinJoinAlias =
                 JoinAlias
                   { joinAliasEntity = resultAlias
-                  , joinAliasField = Just BigQuery.jsonFieldName
+                  -- , joinAliasField = Just BigQuery.jsonFieldName
                   }
             }
         ]
