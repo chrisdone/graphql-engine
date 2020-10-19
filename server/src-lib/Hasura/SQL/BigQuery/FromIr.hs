@@ -696,8 +696,9 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
          JoinAlias
            { joinAliasEntity = alias -- , joinAliasField = pure jsonFieldName
            }
-  eitherAliasOrFrom <- lift (lookupTableFrom existingJoins tableFrom)
-  let entityAlias :: EntityAlias = either id fromAlias eitherAliasOrFrom
+  selectFrom <- lift (fromQualifiedTable tableFrom)
+  let entityAlias :: EntityAlias = fromAlias selectFrom
+  filterExpression <- local (const entityAlias) (fromAnnBoolExp tableFilter)
   fieldSources <-
     local
       (const (EntityAlias (joinAliasEntity joinJoinAlias)))
@@ -706,43 +707,26 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
     case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
       Nothing -> refute (pure NoProjectionFields)
       Just ne -> pure ne
-  filterExpression <- local (const entityAlias) (fromAnnBoolExp tableFilter)
-  case eitherAliasOrFrom of
-    Right selectFrom -> do
-      foreignKeyConditions <-
-        fromMapping (EntityAlias (joinAliasEntity joinJoinAlias)) mapping
-      pure
-        LeftOuterJoin
-          { joinJoinAlias
-          , joinSource =
-              JoinSelect
-                Select
-                  { selectOrderBy = Nothing
-                  , selectTop = NoTop
-                  , selectProjections = NE.fromList [StarProjection]
-                  , selectFrom
-                  , selectJoins = mapMaybe fieldSourceJoin fieldSources
-                  , selectWhere = Where [filterExpression]
-                  , selectAsStruct = AsStruct
-                  , selectOffset = Nothing
-                  }
-          , joinOn = AndExpression foreignKeyConditions
-          , joinProjections = selectProjections
-          }
-    Left _entityAlias ->
-      pure
-        LeftOuterJoin
-          { joinJoinAlias
-          , joinSource =
-              JoinReselect
-                Reselect
-                  { reselectProjections = NE.fromList [StarProjection]
-                  , reselectAsStruct = AsStruct
-                  , reselectWhere = Where [filterExpression]
-                  }
-          , joinOn = trueExpression
-          , joinProjections = selectProjections
-          }
+  foreignKeyConditions <-
+    fromMapping (EntityAlias (joinAliasEntity joinJoinAlias)) mapping
+  pure
+    LeftOuterJoin
+      { joinJoinAlias
+      , joinSource =
+          JoinSelect
+            Select
+              { selectOrderBy = Nothing
+              , selectTop = NoTop
+              , selectProjections = NE.fromList [StarProjection]
+              , selectFrom
+              , selectJoins = mapMaybe fieldSourceJoin fieldSources
+              , selectWhere = Where [filterExpression]
+              , selectAsStruct = AsStruct
+              , selectOffset = Nothing
+              }
+      , joinOn = AndExpression foreignKeyConditions
+      , joinProjections = selectProjections
+      }
   where
     Ir.AnnObjectSelectG { _aosFields = fields :: Ir.AnnFieldsG Expression
                         , _aosTableFrom = tableFrom :: Sql.QualifiedTable
@@ -752,15 +736,6 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
                           , aarColumnMapping = mapping :: HashMap Sql.PGCol Sql.PGCol
                           , aarAnnSelect = annObjectSelectG :: Ir.AnnObjectSelectG Expression
                           } = annRelationSelectG
-
-lookupTableFrom ::
-     Map Sql.QualifiedTable EntityAlias
-  -> Sql.QualifiedTable
-  -> FromIr (Either EntityAlias From)
-lookupTableFrom existingJoins tableFrom = do
-  case M.lookup tableFrom existingJoins of
-    Just entityAlias -> pure (Left entityAlias)
-    Nothing -> fmap Right (fromQualifiedTable tableFrom)
 
 fromArraySelectG :: Ir.ArraySelectG Expression -> ReaderT EntityAlias FromIr (Either Select Join)
 fromArraySelectG =

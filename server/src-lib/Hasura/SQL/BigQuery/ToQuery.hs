@@ -179,7 +179,7 @@ fromOrderBys top moffset morderBys =
                Just orderBys ->
                  SepByPrinter
                    ("," <+> NewlinePrinter)
-                   (concatMap fromOrderBy (toList orderBys))
+                   (map fromOrderBy (toList orderBys))
            , case (top, moffset) of
                (NoTop, Nothing) -> ""
                (NoTop, Just offset) ->
@@ -195,11 +195,11 @@ fromOrderBys top moffset morderBys =
     ]
 
 
-fromOrderBy :: OrderBy -> [Printer]
+fromOrderBy :: OrderBy -> Printer
 fromOrderBy OrderBy {..} =
-  [ fromNullsOrder orderByFieldName orderByNullsOrder
-  , fromFieldName orderByFieldName <+> " " <+> fromOrder orderByOrder
-  ]
+  fromFieldName orderByFieldName <+>
+  " " <+>
+  fromOrder orderByOrder <+> fromNullsOrder orderByFieldName orderByNullsOrder
 
 fromOrder :: Order -> Printer
 fromOrder =
@@ -208,11 +208,11 @@ fromOrder =
     DescOrder -> "DESC"
 
 fromNullsOrder :: FieldName -> NullsOrder -> Printer
-fromNullsOrder fieldName =
+fromNullsOrder _fieldName =
   \case
     NullsAnyOrder -> ""
-    NullsFirst -> "IIF(" <+> fromFieldName fieldName <+> " IS NULL, 0, 1)"
-    NullsLast -> "IIF(" <+> fromFieldName fieldName <+> " IS NULL, 1, 0)"
+    NullsFirst -> " NULLS FIRST"
+    NullsLast -> " NULLS LAST"
 
 fromJoinAlias :: JoinAlias -> Printer
 fromJoinAlias JoinAlias {..} =
