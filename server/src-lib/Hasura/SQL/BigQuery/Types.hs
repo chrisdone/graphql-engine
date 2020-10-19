@@ -13,15 +13,20 @@ data Select = Select
   , selectFrom :: !From
   , selectJoins :: ![Join]
   , selectWhere :: !Where
-  , selectFor :: !For
+  , selectAsStruct :: !AsStruct
   , selectOrderBy :: !(Maybe (NonEmpty OrderBy))
   , selectOffset :: !(Maybe Expression)
   } deriving (Eq, Show)
 
+data AsStruct
+  = NoStruct
+  | AsStruct
+  deriving (Eq, Show)
+
 data Reselect = Reselect
   { reselectProjections :: !(NonEmpty Projection)
-  , reselectFor :: !For
   , reselectWhere :: !Where
+  , reselectAsStruct :: !AsStruct
   } deriving (Eq, Show)
 
 data OrderBy = OrderBy
@@ -40,16 +45,6 @@ data NullsOrder
   | NullsLast
   | NullsAnyOrder
   deriving (Eq, Show)
-
-data For
-  = JsonFor ForJson
-  | NoFor
-  deriving (Eq, Show)
-
-data ForJson = ForJson
-  { jsonCardinality :: JsonCardinality
-  , jsonRoot :: Root
-  } deriving (Eq, Show)
 
 data Root
   = NoRoot
@@ -80,7 +75,6 @@ data JoinSource
 
 data JoinAlias = JoinAlias
   { joinAliasEntity :: Text
-  -- , joinAliasField :: Maybe Text
   } deriving (Eq, Show)
 
 newtype Where =
@@ -118,6 +112,7 @@ data Expression
   | IsNullExpression Expression
   | IsNotNullExpression Expression
   | ColumnExpression FieldName
+  | EntityExpression EntityAlias
   | EqualExpression Expression Expression
   | NotEqualExpression Expression Expression
   | JsonQueryExpression Expression

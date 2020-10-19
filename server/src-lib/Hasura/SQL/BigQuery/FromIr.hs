@@ -107,13 +107,7 @@ mkSQLSelect jsonAggSelect annSimpleSel =
     Ir.JASMultipleRows -> fromSelectRows annSimpleSel
     Ir.JASSingleObject -> do
       select <- fromSelectRows annSimpleSel
-      pure
-        select
-          { selectFor =
-              JsonFor
-                ForJson {jsonCardinality = JsonSingleton, jsonRoot = NoRoot}
-          , selectTop = Top 1
-          }
+      pure select {selectAsStruct = AsStruct, selectTop = Top 1}
 
 -- | Convert from the IR database query into a select.
 fromRootField ::
@@ -164,8 +158,7 @@ fromSelectRows annSelectG = do
       , selectFrom
       , selectJoins = argsJoins <> mapMaybe fieldSourceJoin fieldSources
       , selectWhere = argsWhere <> Where [filterExpression]
-      , selectFor =
-          JsonFor ForJson {jsonCardinality = JsonArray, jsonRoot = NoRoot}
+      , selectAsStruct = AsStruct
       , selectOffset = argsOffset
       }
   where
@@ -215,8 +208,7 @@ fromSelectAggregate annSelectG = do
       , selectFrom
       , selectJoins = argsJoins <> mapMaybe fieldSourceJoin fieldSources
       , selectWhere = argsWhere <> Where [filterExpression]
-      , selectFor =
-          JsonFor ForJson {jsonCardinality = JsonSingleton, jsonRoot = NoRoot}
+      , selectAsStruct = AsStruct
       , selectOrderBy = argsOrderBy
       , selectOffset = argsOffset
       }
@@ -353,7 +345,7 @@ unfurlAnnOrderByElement =
                            , selectJoins = []
                            , selectWhere =
                                Where (foreignKeyConditions <> [whereExpression])
-                           , selectFor = NoFor
+                           , selectAsStruct = NoStruct
                            , selectOrderBy = Nothing
                            , selectOffset = Nothing
                            }
@@ -405,7 +397,7 @@ unfurlAnnOrderByElement =
                             , selectWhere =
                                 Where
                                   (foreignKeyConditions <> [whereExpression])
-                            , selectFor = NoFor
+                            , selectAsStruct = NoStruct
                             , selectOrderBy = Nothing
                             , selectOffset = Nothing
                             }
@@ -477,7 +469,7 @@ fromAnnBoolExpFld =
              , selectJoins = mempty
              , selectWhere = Where (foreignKeyConditions <> [whereExpression])
              , selectTop = NoTop
-             , selectFor = NoFor
+             , selectAsStruct = NoStruct
              , selectOffset = Nothing
              })
 
@@ -508,7 +500,7 @@ fromGExists Ir.GExists {_geTable, _geWhere} = do
       , selectJoins = mempty
       , selectWhere = Where [whereExpression]
       , selectTop = NoTop
-      , selectFor = NoFor
+      , selectAsStruct = NoStruct
       , selectOffset = Nothing
       }
 
@@ -665,23 +657,18 @@ fieldSourceProjections =
       pure
         (ExpressionProjection
            (aliasedJoin
-              { aliasedThing =
+              { aliasedThing
                   -- Basically a cast, to ensure that SQL Server won't
                   -- double-encode the JSON but will "pass it through"
                   -- untouched.
                   {-JsonQueryExpression-}
-                    (ColumnExpression
-                       (joinAliasToField
-                          (joinJoinAlias (aliasedThing aliasedJoin))))
+                 =
+                  (EntityExpression
+                     (EntityAlias
+                        (joinAliasEntity
+                           (joinJoinAlias (aliasedThing aliasedJoin)))))
               }))
     AggregateFieldSource aggregates -> fmap AggregateProjection aggregates
-
-joinAliasToField :: JoinAlias -> FieldName
-joinAliasToField JoinAlias {..} =
-  FieldName
-    { fieldNameEntity = joinAliasEntity
-    , fieldName = "root" -- TODO: {-fromMaybe (error "TODO: Eliminate this case. joinAliasToField") joinAliasField-}
-    }
 
 fieldSourceJoin :: FieldSource -> Maybe Join
 fieldSourceJoin =
@@ -715,8 +702,6 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
          JoinAlias
            {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
            }
-  let selectFor =
-        JsonFor ForJson {jsonCardinality = JsonSingleton, jsonRoot = NoRoot}
   filterExpression <- local (const entityAlias) (fromAnnBoolExp tableFilter)
   case eitherAliasOrFrom of
     Right selectFrom -> do
@@ -734,7 +719,7 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
                   , selectJoins = mapMaybe fieldSourceJoin fieldSources
                   , selectWhere =
                       Where (foreignKeyConditions <> [filterExpression])
-                  , selectFor
+                  , selectAsStruct = AsStruct
                   , selectOffset = Nothing
                   }
           }
@@ -746,7 +731,7 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
               JoinReselect
                 Reselect
                   { reselectProjections = selectProjections
-                  , reselectFor = selectFor
+                  , reselectAsStruct = AsStruct
                   , reselectWhere = Where [filterExpression]
                   }
           }

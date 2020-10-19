@@ -73,6 +73,7 @@ fromExpression =
     IsNotNullExpression expression ->
       "(" <+> fromExpression expression <+> ") IS NOT NULL"
     ColumnExpression fieldName -> fromFieldName fieldName
+    EntityExpression fieldName -> fromEntityAlias fieldName
     EqualExpression x y ->
       "(" <+> fromExpression x <+> ") = (" <+> fromExpression y <+> ")"
     NotEqualExpression x y ->
@@ -114,28 +115,31 @@ fromSelect Select {..} =
   SepByPrinter
     NewlinePrinter
     [ "SELECT " <+>
-      IndentPrinter
-        7
-        (SepByPrinter
-           ("," <+> NewlinePrinter)
-           (map fromProjection (toList selectProjections)))
+      case selectAsStruct of
+        AsStruct -> "AS STRUCT " <+> IndentPrinter (7 + 10) projections
+        NoStruct -> IndentPrinter 7 projections
     , "FROM " <+> IndentPrinter 5 (fromFrom selectFrom)
     , SepByPrinter
         NewlinePrinter
         (map
            (\LeftOuterJoin {..} ->
               SeqPrinter
-                [ "LEFT OUTER JOIN ("
-                , IndentPrinter 13 (fromJoinSource joinSource)
-                , ") ON (true) "
+                [ "LEFT OUTER JOIN (" <+>
+                  IndentPrinter 17 (fromJoinSource joinSource) <+> ")"
                 , NewlinePrinter
-                , "AS "
-                , fromJoinAlias joinJoinAlias
+                , "AS " <+> fromJoinAlias joinJoinAlias
+                , NewlinePrinter
+                , "ON (true) "
                 ])
            selectJoins)
     , fromWhere selectWhere
     , fromOrderBys selectTop selectOffset selectOrderBy
     ]
+  where
+    projections =
+      SepByPrinter
+        ("," <+> NewlinePrinter)
+        (map fromProjection (toList selectProjections))
 
 fromJoinSource :: JoinSource -> Printer
 fromJoinSource =
@@ -294,6 +298,9 @@ fromAliased Aliased {..} =
 
 fromNameText :: Text -> Printer
 fromNameText t = QueryPrinter (rawUnescapedText ("`" <> t <> "`"))
+
+fromEntityAlias :: EntityAlias -> Printer
+fromEntityAlias (EntityAlias t) = fromNameText t
 
 trueExpression :: Expression
 trueExpression = ValueExpression (BoolValue True)

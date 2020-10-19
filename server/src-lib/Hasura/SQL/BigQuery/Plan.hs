@@ -146,10 +146,10 @@ planNoPlan unpreparedRoot = do
       (runValidate (BigQuery.runFromIr (BigQuery.fromRootField rootField)))
   pure
     select
-      { selectFor =
-          case selectFor select of
-            NoFor -> NoFor
-            JsonFor forJson -> JsonFor forJson {jsonRoot = Root "root"}
+      { selectAsStruct =
+          case selectAsStruct select of
+            NoStruct -> NoStruct
+            AsStruct -> AsStruct
       }
 
 planMultiplex ::
@@ -190,8 +190,7 @@ collapseMap :: OMap.InsOrdHashMap G.Name Select
             -> Reselect
 collapseMap selects =
   Reselect
-    { reselectFor =
-        JsonFor ForJson {jsonCardinality = JsonSingleton, jsonRoot = NoRoot}
+    { reselectAsStruct = AsStruct
     , reselectWhere = Where mempty
     , reselectProjections =
         NE.fromList (map projectSelect (OMap.toList selects))
@@ -343,8 +342,7 @@ multiplexRootReselect rootReselect =
             }
         ]
     , selectWhere = Where mempty
-    , selectFor =
-        JsonFor ForJson {jsonCardinality = JsonArray, jsonRoot = NoRoot}
+    , selectAsStruct = AsStruct
     , selectOrderBy = Nothing
     , selectOffset = Nothing
     }
