@@ -80,6 +80,7 @@ fromExpression =
       "(" <+> fromExpression x <+> ") != (" <+> fromExpression y <+> ")"
     ToStringExpression e -> "CONCAT(" <+> fromExpression e <+> ", '')"
     SelectExpression s -> "(" <+> IndentPrinter 1 (fromSelect s) <+> ")"
+    ReselectExpression s -> "(" <+> IndentPrinter 1 (fromReselect s) <+> ")"
     ArrayExpression e -> "ARRAY(" <+> IndentPrinter 6 (fromExpression e) <+> ")"
     OpExpression op x y ->
       "(" <+>
@@ -129,7 +130,7 @@ fromSelect Select {..} =
                 , NewlinePrinter
                 , "AS " <+> fromJoinAlias joinJoinAlias
                 , NewlinePrinter
-                , "ON (true) "
+                , "ON (" <+> IndentPrinter 4 (fromExpression joinOn) <+> ")"
                 ])
            selectJoins)
     , fromWhere selectWhere
@@ -152,13 +153,16 @@ fromReselect Reselect {..} =
   SepByPrinter
     NewlinePrinter
     [ "SELECT " <+>
-      IndentPrinter
-        7
-        (SepByPrinter
-           ("," <+> NewlinePrinter)
-           (map fromProjection (toList reselectProjections)))
+      case reselectAsStruct of
+        AsStruct -> "AS STRUCT " <+> IndentPrinter (7 + 10) projections
+        NoStruct -> IndentPrinter 7 projections
     , fromWhere reselectWhere
     ]
+  where
+    projections =
+      SepByPrinter
+        ("," <+> NewlinePrinter)
+        (map fromProjection (toList reselectProjections))
 
 fromOrderBys ::
      Top -> Maybe Expression -> Maybe (NonEmpty OrderBy) -> Printer

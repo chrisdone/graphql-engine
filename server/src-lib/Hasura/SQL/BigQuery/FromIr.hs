@@ -9,6 +9,7 @@ module Hasura.SQL.BigQuery.FromIr
   , runFromIr
   , FromIr
   , jsonFieldName
+  , trueExpression
   ) where
 
 import           Control.Monad
@@ -320,7 +321,8 @@ unfurlAnnOrderByElement =
       selectFrom <- lift (lift (fromQualifiedTable table))
       joinAliasEntity <-
         lift (lift (generateEntityAlias (ForOrderAlias (tableNameText table))))
-      foreignKeyConditions <- lift (fromMapping selectFrom mapping)
+      foreignKeyConditions <-
+        lift (fromMapping (EntityAlias joinAliasEntity) mapping)
       -- TODO: Because these object relations are re-used by regular
       -- object mapping queries, this WHERE may be unnecessarily
       -- restrictive. But I actually don't know from where such an
@@ -343,17 +345,20 @@ unfurlAnnOrderByElement =
                            , selectProjections = NE.fromList [StarProjection]
                            , selectFrom
                            , selectJoins = []
-                           , selectWhere =
-                               Where (foreignKeyConditions <> [whereExpression])
+                           , selectWhere = Where [whereExpression]
                            , selectAsStruct = NoStruct
                            , selectOrderBy = Nothing
                            , selectOffset = Nothing
                            }
                    , joinJoinAlias =
-                       JoinAlias {joinAliasEntity-- , joinAliasField = Nothing
-                                 }
+                       JoinAlias
+                         { joinAliasEntity -- , joinAliasField = Nothing
+                         }
+                   , joinOn = AndExpression foreignKeyConditions
+                   , joinProjections = NE.fromList [StarProjection]
                    }
-             , unfurledObjectTableAlias = Just (table, EntityAlias joinAliasEntity)
+             , unfurledObjectTableAlias =
+                 Just (table, EntityAlias joinAliasEntity)
              })
       local
         (const (EntityAlias joinAliasEntity))
@@ -363,7 +368,8 @@ unfurlAnnOrderByElement =
       let alias = aggFieldName
       joinAliasEntity <-
         lift (lift (generateEntityAlias (ForOrderAlias (tableNameText table))))
-      foreignKeyConditions <- lift (fromMapping selectFrom mapping)
+      foreignKeyConditions <-
+        lift (fromMapping (EntityAlias joinAliasEntity) mapping)
       whereExpression <-
         lift (local (const (fromAlias selectFrom)) (fromAnnBoolExp annBoolExp))
       aggregate <-
@@ -394,16 +400,17 @@ unfurlAnnOrderByElement =
                                   ]
                             , selectFrom
                             , selectJoins = []
-                            , selectWhere =
-                                Where
-                                  (foreignKeyConditions <> [whereExpression])
+                            , selectWhere = Where [whereExpression]
                             , selectAsStruct = NoStruct
                             , selectOrderBy = Nothing
                             , selectOffset = Nothing
                             }
                     , joinJoinAlias =
-                        JoinAlias {joinAliasEntity-- , joinAliasField = Nothing
-                                  }
+                        JoinAlias
+                          { joinAliasEntity -- , joinAliasField = Nothing
+                          }
+                    , joinOn = AndExpression foreignKeyConditions
+                    , joinProjections = NE.fromList [StarProjection]
                     }
               , unfurledObjectTableAlias = Nothing
               }))
@@ -450,7 +457,7 @@ fromAnnBoolExpFld =
       pure (AndExpression expressions)
     Ir.AVRel Ir.RelInfo {riMapping = mapping, riRTable = table} annBoolExp -> do
       selectFrom <- lift (fromQualifiedTable table)
-      foreignKeyConditions <- fromMapping selectFrom mapping
+      foreignKeyConditions <- fromMapping (fromAlias selectFrom) mapping
       whereExpression <-
         local (const (fromAlias selectFrom)) (fromAnnBoolExp annBoolExp)
       pure
@@ -657,16 +664,13 @@ fieldSourceProjections =
       pure
         (ExpressionProjection
            (aliasedJoin
-              { aliasedThing
-                  -- Basically a cast, to ensure that SQL Server won't
-                  -- double-encode the JSON but will "pass it through"
-                  -- untouched.
-                  {-JsonQueryExpression-}
-                 =
-                  (EntityExpression
-                     (EntityAlias
-                        (joinAliasEntity
-                           (joinJoinAlias (aliasedThing aliasedJoin)))))
+              { aliasedThing =
+                  ReselectExpression
+                    Reselect
+                      { reselectProjections = joinProjections (aliasedThing aliasedJoin)
+                      , reselectWhere = Where []
+                      , reselectAsStruct = AsStruct
+                      }
               }))
     AggregateFieldSource aggregates -> fmap AggregateProjection aggregates
 
@@ -685,27 +689,28 @@ fromObjectRelationSelectG ::
   -> Ir.ObjectRelationSelectG Expression
   -> ReaderT EntityAlias FromIr Join
 fromObjectRelationSelectG existingJoins annRelationSelectG = do
-  eitherAliasOrFrom <- lift (lookupTableFrom existingJoins tableFrom)
-  let entityAlias :: EntityAlias = either id fromAlias eitherAliasOrFrom
-  fieldSources <-
-    local
-      (const entityAlias)
-      (traverse (fromAnnFieldsG mempty LeaveNumbersAlone) fields)
-  selectProjections <-
-    case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
-      Nothing -> refute (pure NoProjectionFields)
-      Just ne -> pure ne
   joinJoinAlias <-
     do fieldName <- lift (fromRelName aarRelationshipName)
        alias <- lift (generateEntityAlias (ObjectRelationTemplate fieldName))
        pure
          JoinAlias
-           {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
+           { joinAliasEntity = alias -- , joinAliasField = pure jsonFieldName
            }
+  eitherAliasOrFrom <- lift (lookupTableFrom existingJoins tableFrom)
+  let entityAlias :: EntityAlias = either id fromAlias eitherAliasOrFrom
+  fieldSources <-
+    local
+      (const (EntityAlias (joinAliasEntity joinJoinAlias)))
+      (traverse (fromAnnFieldsG mempty LeaveNumbersAlone) fields)
+  selectProjections <-
+    case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
+      Nothing -> refute (pure NoProjectionFields)
+      Just ne -> pure ne
   filterExpression <- local (const entityAlias) (fromAnnBoolExp tableFilter)
   case eitherAliasOrFrom of
     Right selectFrom -> do
-      foreignKeyConditions <- fromMapping selectFrom mapping
+      foreignKeyConditions <-
+        fromMapping (EntityAlias (joinAliasEntity joinJoinAlias)) mapping
       pure
         LeftOuterJoin
           { joinJoinAlias
@@ -714,14 +719,15 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
                 Select
                   { selectOrderBy = Nothing
                   , selectTop = NoTop
-                  , selectProjections
+                  , selectProjections = NE.fromList [StarProjection]
                   , selectFrom
                   , selectJoins = mapMaybe fieldSourceJoin fieldSources
-                  , selectWhere =
-                      Where (foreignKeyConditions <> [filterExpression])
+                  , selectWhere = Where [filterExpression]
                   , selectAsStruct = AsStruct
                   , selectOffset = Nothing
                   }
+          , joinOn = AndExpression foreignKeyConditions
+          , joinProjections = selectProjections
           }
     Left _entityAlias ->
       pure
@@ -730,10 +736,12 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
           , joinSource =
               JoinReselect
                 Reselect
-                  { reselectProjections = selectProjections
+                  { reselectProjections = NE.fromList [StarProjection]
                   , reselectAsStruct = AsStruct
                   , reselectWhere = Where [filterExpression]
                   }
+          , joinOn = trueExpression
+          , joinProjections = selectProjections
           }
   where
     Ir.AnnObjectSelectG { _aosFields = fields :: Ir.AnnFieldsG Expression
@@ -770,10 +778,8 @@ fromArrayAggregateSelectG ::
 fromArrayAggregateSelectG annRelationSelectG = do
   fieldName <- lift (fromRelName aarRelationshipName)
   select <- lift (fromSelectAggregate annSelectG)
-  joinSelect <-
-    do foreignKeyConditions <- fromMapping (selectFrom select) mapping
-       pure
-         select {selectWhere = Where foreignKeyConditions <> selectWhere select}
+  foreignKeyConditions <- fromMapping (fromAlias (selectFrom select)) mapping
+  joinSelect <- pure select {selectWhere = selectWhere select}
   alias <- lift (generateEntityAlias (ArrayAggregateTemplate fieldName))
   pure
     LeftOuterJoin
@@ -781,7 +787,9 @@ fromArrayAggregateSelectG annRelationSelectG = do
           JoinAlias
             {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
             }
-      , joinSource = JoinSelect joinSelect
+      , joinSource = JoinSelect joinSelect { selectProjections = NE.fromList [StarProjection]}
+      , joinOn = AndExpression foreignKeyConditions
+      , joinProjections = selectProjections select -- TODO: these are in the wrong scope -- should be join alias.
       }
   where
     Ir.AnnRelationSelectG { aarRelationshipName
@@ -794,7 +802,7 @@ fromArrayRelationSelectG annRelationSelectG = do
   {-fieldName <- lift (fromRelName aarRelationshipName)-}
   select <- lift (fromSelectRows annSelectG)
   joinSelect <-
-    do foreignKeyConditions <- fromMapping (selectFrom select) mapping
+    do foreignKeyConditions <- fromMapping (fromAlias (selectFrom select)) mapping
        pure
          select {selectWhere = Where foreignKeyConditions <> selectWhere select}
   {-alias <- lift (generateEntityAlias (ArrayRelationTemplate fieldName))-}
@@ -827,13 +835,13 @@ fromRelName relName =
 -- to the left/right of @select ... join ...@. Therefore left=remote,
 -- right=local in this context.
 fromMapping ::
-     From
+     EntityAlias
   -> HashMap Sql.PGCol Sql.PGCol
   -> ReaderT EntityAlias FromIr [Expression]
-fromMapping localFrom =
+fromMapping alias =
   traverse
     (\(remotePgCol, localPgCol) -> do
-       localFieldName <- local (const (fromAlias localFrom)) (fromPGCol localPgCol)
+       localFieldName <- local (const alias) (fromPGCol localPgCol)
        remoteFieldName <- fromPGCol remotePgCol
        pure
          (EqualExpression

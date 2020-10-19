@@ -66,6 +66,8 @@ data Projection
 data Join = LeftOuterJoin
   { joinSource :: !JoinSource
   , joinJoinAlias :: !JoinAlias
+  , joinOn :: !Expression
+  , joinProjections :: !(NonEmpty Projection)
   } deriving (Eq, Show)
 
 data JoinSource
@@ -108,6 +110,7 @@ data Expression
   | NotExpression Expression
   | ExistsExpression Select
   | SelectExpression Select
+  | ReselectExpression Reselect
   | ArrayExpression Expression
   | IsNullExpression Expression
   | IsNotNullExpression Expression

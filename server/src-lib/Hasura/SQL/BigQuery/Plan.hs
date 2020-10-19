@@ -339,6 +339,8 @@ multiplexRootReselect rootReselect =
                   { joinAliasEntity = resultAlias
                   -- , joinAliasField = Just BigQuery.jsonFieldName
                   }
+                  , joinOn = BigQuery.trueExpression
+            , joinProjections = NE.fromList [StarProjection]
             }
         ]
     , selectWhere = Where mempty
