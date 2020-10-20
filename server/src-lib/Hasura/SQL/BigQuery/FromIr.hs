@@ -113,7 +113,6 @@ Where clause of child relation:
 
 -}
 
--- TODO: SQL generation is SQL Server-specific, fix that.
 -- TODO: Send queries to server.
 -- TODO: Generate JSON at end of query.
 
@@ -147,7 +146,6 @@ import           Data.Sequence (Seq)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Read as T
-import qualified Database.ODBC.SQLServer as Odbc
 import qualified Hasura.GraphQL.Context as Graphql
 import qualified Hasura.RQL.DML.Select as DS
 import qualified Hasura.RQL.DML.Select.Types as Ir
@@ -630,7 +628,7 @@ fromTableAggregateFieldG (Ir.FieldName name, field) =
       pure
         (ExpressionFieldSource
            Aliased
-             { aliasedThing = BigQuery.ValueExpression (Odbc.TextValue text)
+             { aliasedThing = BigQuery.ValueExpression (TextValue text)
              , aliasedAlias = name
              })
     Ir.TAFNodes {} -> refute (pure (NodesUnsupportedForNow field))
@@ -665,7 +663,7 @@ fromAggregateField aggregateField =
           (\(_fieldName, pgColFld) ->
              case pgColFld of
                Ir.PCFCol pgCol -> fmap ColumnExpression (fromPGCol pgCol)
-               Ir.PCFExp text -> pure (ValueExpression (Odbc.TextValue text)))
+               Ir.PCFExp text -> pure (ValueExpression (TextValue text)))
           fs
       pure (OpAggregate op args)
 
@@ -685,7 +683,7 @@ fromAnnFieldsG stringifyNumbers (Ir.FieldName name, field) =
       pure
         (ExpressionFieldSource
            Aliased
-             { aliasedThing = BigQuery.ValueExpression (Odbc.TextValue text)
+             { aliasedThing = BigQuery.ValueExpression (TextValue text)
              , aliasedAlias = name
              })
     Ir.AFObjectRelation objectRelationSelectG ->
@@ -973,7 +971,7 @@ fromSQLExpAsInt =
   \case
     s@(Sql.SELit text) ->
       case T.decimal text of
-        Right (d, "") -> pure (ValueExpression (Odbc.IntValue d))
+        Right (d, "") -> pure (ValueExpression (IntValue d))
         _ -> refute (pure (InvalidIntegerishSql s))
     s -> refute (pure (InvalidIntegerishSql s))
 
@@ -992,7 +990,7 @@ fromGBoolExp =
 -- Misc combinators
 
 trueExpression :: Expression
-trueExpression = ValueExpression (Odbc.BoolValue True)
+trueExpression = ValueExpression (BoolValue True)
 
 --------------------------------------------------------------------------------
 -- Constants

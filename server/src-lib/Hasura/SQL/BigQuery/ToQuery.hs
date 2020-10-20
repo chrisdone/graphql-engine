@@ -6,8 +6,10 @@
 module Hasura.SQL.BigQuery.ToQuery
   ( fromSelect
   , fromReselect
-  , toQueryFlat
-  , toQueryPretty
+  , toBuilderFlat
+  , toBuilderPretty
+  , toTextFlat
+  , toTextPretty
   , Printer(..)
   ) where
 
@@ -20,10 +22,11 @@ import           Data.String
 import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
+import           Data.Text.Lazy.Builder (Builder)
 import qualified Data.Text.Lazy.Builder as LT
-import           Database.ODBC.SQLServer
 import           Hasura.SQL.BigQuery.Types
 import           Prelude
+import           Text.Printf
 
 --------------------------------------------------------------------------------
 -- Types
@@ -32,12 +35,12 @@ data Printer
   = SeqPrinter [Printer]
   | SepByPrinter Printer [Printer]
   | NewlinePrinter
-  | QueryPrinter Query
+  | UnsafeTextPrinter Text
   | IndentPrinter Int Printer
   deriving (Show, Eq)
 
 instance IsString Printer where
-  fromString = QueryPrinter . fromString
+  fromString = UnsafeTextPrinter . fromString
 
 (<+>) :: Printer -> Printer -> Printer
 (<+>) x y = SeqPrinter [x,y]
@@ -51,7 +54,7 @@ fromExpression =
     JsonQueryExpression e -> "JSON_QUERY(" <+> fromExpression e <+> ")"
     JsonValueExpression e path ->
       "JSON_VALUE(" <+> fromExpression e <+> fromPath path <+> ")"
-    ValueExpression value -> QueryPrinter (toSql value)
+    ValueExpression value -> fromValue value
     AndExpression xs ->
       SepByPrinter
         (NewlinePrinter <+> "AND ")
@@ -67,7 +70,7 @@ fromExpression =
               (\x -> "(" <+> fromExpression x <+> ")")
               (fromMaybe (pure falseExpression) (NE.nonEmpty xs))))
     NotExpression expression -> "NOT " <+> (fromExpression expression)
-    ExistsExpression select -> "EXISTS (" <+> fromSelect select <+> ")"
+    ExistsExpression select -> "EXISTS (" <+> IndentPrinter 9 (fromSelect select) <+> ")"
     IsNullExpression expression ->
       "(" <+> fromExpression expression <+> ") IS NULL"
     IsNotNullExpression expression ->
@@ -86,6 +89,22 @@ fromExpression =
       "(" <+>
       fromExpression x <+>
       ") " <+> fromOp op <+> " (" <+> fromExpression y <+> ")"
+
+fromValue :: Value -> Printer
+fromValue =
+  \case
+    -- TODO: More efficient printers.
+    IntValue i -> UnsafeTextPrinter (T.pack (show (i :: Int)))
+    FloatValue i -> UnsafeTextPrinter (T.pack (printf "%f" (i :: Float)))
+    DoubleValue i -> UnsafeTextPrinter (T.pack (printf "%f" (i :: Double)))
+    BoolValue v ->
+      case v of
+        True -> "TRUE"
+        False -> "FALSE"
+    -- TODO: Proper escaping mechanism for text.
+    TextValue text -> UnsafeTextPrinter (T.pack (show text))
+    NullValue -> "NULL"
+
 
 fromOp :: Op -> Printer
 fromOp =
@@ -186,11 +205,11 @@ fromOrderBys top moffset morderBys =
                  "OFFSET " <+> fromExpression offset <+> " ROWS"
                (Top n, Nothing) ->
                  "OFFSET 0 ROWS FETCH NEXT " <+>
-                 QueryPrinter (toSql n) <+> " ROWS ONLY"
+                 fromValue (IntValue n) <+> " ROWS ONLY"
                (Top n, Just offset) ->
                  "OFFSET " <+>
                  fromExpression offset <+>
-                 " ROWS FETCH NEXT " <+> QueryPrinter (toSql n) <+> " ROWS ONLY"
+                 " ROWS FETCH NEXT " <+> fromValue (IntValue n) <+> " ROWS ONLY"
            ])
     ]
 
@@ -235,7 +254,7 @@ fromAggregate =
   \case
     CountAggregate countable -> "COUNT(" <+> fromCountable countable <+> ")"
     OpAggregate text args ->
-      QueryPrinter (rawUnescapedText text) <+>
+      UnsafeTextPrinter text <+>
       "(" <+> SepByPrinter ", " (map fromExpression (toList args)) <+> ")"
     TextAggregate text -> fromExpression (ValueExpression (TextValue text))
 
@@ -301,7 +320,7 @@ fromAliased Aliased {..} =
   ((" AS " <+>) . fromNameText) aliasedAlias
 
 fromNameText :: Text -> Printer
-fromNameText t = QueryPrinter (rawUnescapedText ("`" <> t <> "`"))
+fromNameText t = UnsafeTextPrinter ("`" <> t <> "`")
 
 fromEntityAlias :: EntityAlias -> Printer
 fromEntityAlias (EntityAlias t) = fromNameText t
@@ -315,31 +334,37 @@ falseExpression = ValueExpression (BoolValue False)
 --------------------------------------------------------------------------------
 -- Basic printing API
 
-toQueryFlat :: Printer -> Query
-toQueryFlat = go 0
+toBuilderFlat :: Printer -> Builder
+toBuilderFlat = go 0
   where
     go level =
       \case
-        QueryPrinter q -> q
+        UnsafeTextPrinter q -> LT.fromText q
         SeqPrinter xs -> mconcat (filter notEmpty (map (go level) xs))
         SepByPrinter x xs ->
           mconcat
             (intersperse (go level x) (filter notEmpty (map (go level) xs)))
         NewlinePrinter -> " "
         IndentPrinter n p -> go (level + n) p
-    notEmpty = (/= mempty) . renderQuery
+    notEmpty = (/= mempty)
 
-toQueryPretty :: Printer -> Query
-toQueryPretty = go 0
+toBuilderPretty :: Printer -> Builder
+toBuilderPretty = go 0
   where
     go level =
       \case
-        QueryPrinter q -> q
+        UnsafeTextPrinter q -> LT.fromText q
         SeqPrinter xs -> mconcat (filter notEmpty (map (go level) xs))
         SepByPrinter x xs ->
           mconcat
             (intersperse (go level x) (filter notEmpty (map (go level) xs)))
         NewlinePrinter -> "\n" <> indentation level
         IndentPrinter n p -> go (level + n) p
-    indentation n = rawUnescapedText (T.replicate n " ")
-    notEmpty = (/= mempty) . renderQuery
+    indentation n = LT.fromText (T.replicate n " ")
+    notEmpty = (/= mempty)
+
+toTextPretty :: Printer -> Text
+toTextPretty = LT.toStrict . LT.toLazyText . toBuilderPretty
+
+toTextFlat :: Printer -> Text
+toTextFlat = LT.toStrict . LT.toLazyText . toBuilderFlat

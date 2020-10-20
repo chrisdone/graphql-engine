@@ -12,7 +12,7 @@ import           Control.Applicative
 import           Control.Monad.Trans
 import           Control.Monad.Trans.State.Strict
 import           Control.Monad.Validate
-import           Data.Aeson
+import           Data.Aeson (encode, object, (.=))
 import           Data.Bifunctor
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S8
@@ -26,13 +26,13 @@ import           Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 import           Data.Void
-import qualified Database.ODBC.SQLServer as Odbc
 import qualified Hasura.GraphQL.Context as Graphql
 import qualified Hasura.GraphQL.Execute.Query as Query
 import qualified Hasura.GraphQL.Parser.Column as Graphql
 import qualified Hasura.GraphQL.Parser.Schema as PS
 import qualified Hasura.SQL.BigQuery.FromIr as BigQuery
 import qualified Hasura.SQL.BigQuery.FromIr as FromIr
+import           Hasura.SQL.BigQuery.ToQuery
 import           Hasura.SQL.BigQuery.ToQuery as BigQuery
 import           Hasura.SQL.BigQuery.Types as BigQuery
 import qualified Hasura.SQL.DML as Sql
@@ -67,14 +67,12 @@ test i =
            , show (multiplexRootReselect (collapseMap fields))
            , "\nprinted (pretty)"
            , T.unpack
-               (Odbc.renderQuery
-                  (toQueryPretty
-                     (fromSelect (multiplexRootReselect (collapseMap fields)))))
+               (toTextPretty
+                  (fromSelect (multiplexRootReselect (collapseMap fields))))
            , "\nprinted (flat)"
            , T.unpack
-               (Odbc.renderQuery
-                  (toQueryFlat
-                     (fromSelect (multiplexRootReselect (collapseMap fields)))))
+               (toTextFlat
+                  (fromSelect (multiplexRootReselect (collapseMap fields))))
            ])
   where
     rootFields =
@@ -108,7 +106,7 @@ runSelect select = do
       body =
         encode
           (object
-             [ "query" .= Odbc.renderQuery (toQueryFlat (fromSelect select))
+             [ "query" .= toTextFlat (fromSelect select)
              , "useLegacySql" .= False -- Important, it makes `quotes` work properly.
              ])
   L.putStrLn ("Request body:\n" <> body)
@@ -209,12 +207,12 @@ collapseMap selects =
 
 globalSessionExpression :: BigQuery.Expression
 globalSessionExpression =
-  ValueExpression (Odbc.TextValue "TODO: sessionExpression")
+  ValueExpression (TextValue "TODO: sessionExpression")
 
 -- TODO: real env object.
 envObjectExpression :: BigQuery.Expression
 envObjectExpression =
-  ValueExpression (Odbc.TextValue "[{\"result_id\":1,\"result_vars\":{\"synthetic\":[10]}}]")
+  ValueExpression (TextValue "[{\"result_id\":1,\"result_vars\":{\"synthetic\":[10]}}]")
 
 --------------------------------------------------------------------------------
 -- Resolving values
@@ -364,25 +362,25 @@ rowAlias = "row"
 --------------------------------------------------------------------------------
 -- PG compat
 
--- | Convert from PG values to ODBC. Later, this shouldn't be
--- necessary; the value should come in as an ODBC value already.
-fromPgScalarValue :: Sql.PGScalarValue -> Maybe Odbc.Value
+-- | Convert from PG values to Value. Later, this shouldn't be
+-- necessary; the value should come in as a value already.
+fromPgScalarValue :: Sql.PGScalarValue -> Maybe Value
 fromPgScalarValue =
   \case
     Sql.PGValInteger i32 ->
-      pure (Odbc.IntValue ((fromIntegral :: Int32 -> Int) i32))
+      pure (IntValue ((fromIntegral :: Int32 -> Int) i32))
     Sql.PGValSmallInt i16 ->
-      pure (Odbc.IntValue ((fromIntegral :: Int16 -> Int) i16))
+      pure (IntValue ((fromIntegral :: Int16 -> Int) i16))
     Sql.PGValBigInt i64 ->
-      pure (Odbc.IntValue ((fromIntegral :: Int64 -> Int) i64))
-    Sql.PGValFloat float -> pure (Odbc.FloatValue float)
-    Sql.PGValDouble double -> pure (Odbc.DoubleValue double)
-    Sql.PGNull _pgscalartype -> pure Odbc.NullValue
-    Sql.PGValBoolean bool -> pure (Odbc.BoolValue bool)
-    Sql.PGValVarchar text -> pure (Odbc.TextValue text)
-    Sql.PGValText text -> pure (Odbc.TextValue text)
-    Sql.PGValDate day -> pure (Odbc.DayValue day)
-    Sql.PGValTimeStamp localtime -> pure (Odbc.LocalTimeValue localtime)
+      pure (IntValue ((fromIntegral :: Int64 -> Int) i64))
+    Sql.PGValFloat float -> pure (FloatValue float)
+    Sql.PGValDouble double -> pure (DoubleValue double)
+    Sql.PGNull _pgscalartype -> pure NullValue
+    Sql.PGValBoolean bool -> pure (BoolValue bool)
+    Sql.PGValVarchar text -> pure (TextValue text)
+    Sql.PGValText text -> pure (TextValue text)
+    Sql.PGValDate _day -> Nothing
+    Sql.PGValTimeStamp _localtime -> Nothing
      -- For these, see Datetime2 in Database.ODBC.SQLServer.
     Sql.PGValTimeStampTZ _utctime -> Nothing -- TODO: Sql.PGValTimeStampTZ utctime
     Sql.PGValTimeTZ _zonedtimeofday -> Nothing -- TODO: Sql.PGValTimeTZ zonedtimeofday

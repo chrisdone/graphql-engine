@@ -4,7 +4,6 @@ module Hasura.SQL.BigQuery.Types where
 
 import           Data.List.NonEmpty (NonEmpty(..))
 import           Data.Text (Text)
-import qualified Database.ODBC.SQLServer as Odbc
 import           Prelude
 
 data Select = Select
@@ -103,8 +102,17 @@ instance Semigroup Top where
   (<>) x NoTop = x
   (<>) (Top x) (Top y) = Top (min x y)
 
+data Value
+  = IntValue Int
+  | BoolValue Bool
+  | TextValue Text
+  | FloatValue Float
+  | DoubleValue Double
+  | NullValue
+  deriving (Show, Eq)
+
 data Expression
-  = ValueExpression Odbc.Value
+  = ValueExpression Value
   | AndExpression [Expression]
   | OrExpression [Expression]
   | NotExpression Expression
