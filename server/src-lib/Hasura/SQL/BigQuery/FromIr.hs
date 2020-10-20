@@ -1,4 +1,72 @@
 -- | Translate from the DML to the BigQuery dialect.
+{-
+
+Basic fields are selected as-is:
+
+  Album { Title }
+
+  =>
+
+  SELECT AS STRUCT `t_Album1`.`Title` AS `Title`
+  FROM `chinook`.`Album` AS `t_Album1`
+
+Singleton object relations are selected via LEFT OUTER JOIN with an ON
+for the mapping fields:
+
+  Album { Artist { Name } }
+
+  =>
+
+  SELECT AS STRUCT (SELECT AS STRUCT `or_Artist1`.`Name` AS `Name`) AS `Artist`
+  FROM `chinook`.`Album` AS `t_Album1`
+  LEFT OUTER JOIN (SELECT AS STRUCT *
+                   FROM `chinook`.`Artist` AS `t_Artist1`)
+  AS `or_Artist1`
+  ON (((`or_Artist1`.`ArtistId`) = (`t_Album1`.`ArtistId`)))
+
+Array relations are selected via ARRAY() with a sub-select in it:
+
+  Album { Track { Name } }
+
+  =>
+
+  SELECT AS STRUCT ARRAY((SELECT AS STRUCT `t_Track1`.`Name` AS `Name`
+                          FROM `chinook`.`Track` AS `t_Track1`
+                          WHERE ((`t_Track1`.`AlbumId`) = (`t_Album1`.`AlbumId`)))) AS `Track`
+  FROM `chinook`.`Album` AS `t_Album1`
+
+Each row is selected AS STRUCT which produces nested records in the
+result.
+
+Example of object relation within array relation:
+
+  Album {
+    Track { album { Title } }
+  }
+
+  =>
+
+  SELECT AS STRUCT ARRAY((SELECT AS STRUCT (SELECT AS STRUCT `or_album1`.`Title` AS `Title`) AS `album`
+                          FROM `chinook`.`Track` AS `t_Track1`
+                          LEFT OUTER JOIN (SELECT AS STRUCT *
+                                           FROM `chinook`.`Album` AS `t_Album2`)
+                          AS `or_album1`
+                          ON (((`or_album1`.`AlbumId`) = (`t_Track1`.`AlbumId`)))
+                          WHERE ((`t_Track1`.`AlbumId`) = (`t_Album1`.`AlbumId`)))) AS `Track`
+  FROM `chinook`.`Album` AS `t_Album1`
+
+Aggregate query:
+
+  Album_aggregate {
+    aggregate{count}
+  }
+
+  =>
+
+  SELECT AS STRUCT COUNT(*) AS `count`
+  FROM `chinook`.`Album` AS `t_Album1`
+
+-}
 
 module Hasura.SQL.BigQuery.FromIr
   ( fromSelectRows
