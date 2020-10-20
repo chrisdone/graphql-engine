@@ -96,7 +96,26 @@ Order by aggregation:
             FROM `chinook`.`Track` AS `t_Track1`
             WHERE ((`t_Track1`.`AlbumId`) = (`t_Album1`.`AlbumId`)))) ASC NULLS LAST
 
+Where clause of child relation:
+
+  Album(where: {Artist: {Name: {_eq: "System of a Down"}}}) {
+    Title
+  }
+
+  =>
+
+  SELECT AS STRUCT `t_Album1`.`Title` AS `Title`
+  FROM `chinook`.`Album` AS `t_Album1`
+  WHERE ((EXISTS (SELECT 1 AS `exists_placeholder`
+        FROM `chinook`.`Artist` AS `t_Artist1`
+        WHERE ((`t_Artist1`.`ArtistId`) = (`t_Album1`.`ArtistId`))
+              AND ((((`t_Artist1`.`Name`) = (('System of a Down'))))))))
+
 -}
+
+-- TODO: SQL generation is SQL Server-specific, fix that.
+-- TODO: Send queries to server.
+-- TODO: Generate JSON at end of query.
 
 module Hasura.SQL.BigQuery.FromIr
   ( fromSelectRows
