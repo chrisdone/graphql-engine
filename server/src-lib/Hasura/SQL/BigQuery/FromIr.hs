@@ -113,8 +113,16 @@ Where clause of child relation:
 
 -}
 
--- TODO: Send queries to server.
--- TODO: Generate JSON at end of query.
+-- TODO: Collapse subqueries into WITH clauses.
+
+-- invalid SQL generated (!):
+--
+-- Track{album{Artist{Name}}}
+--
+-- restricted by BigQuery:
+--
+-- Artist{Album{Track{Name}}}
+--
 
 module Hasura.SQL.BigQuery.FromIr
   ( fromSelectRows
@@ -707,6 +715,7 @@ fromAnnFieldsG stringifyNumbers (Ir.FieldName name, field) =
              ExpressionFieldSource
                Aliased
                  { aliasedThing = ArrayExpression (SelectExpression select)
+                 -- TODO: Perhaps here is where a 'WITH' or 'ARRAY_AGG'' would work.
                  , aliasedAlias = name
                  }
            Right aliasedThing ->
