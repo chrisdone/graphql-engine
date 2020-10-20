@@ -197,9 +197,9 @@ fromOrderBys top moffset morderBys =
 
 fromOrderBy :: OrderBy -> Printer
 fromOrderBy OrderBy {..} =
-  fromFieldName orderByFieldName <+>
-  " " <+>
-  fromOrder orderByOrder <+> fromNullsOrder orderByFieldName orderByNullsOrder
+  "(" <+>
+  fromExpression orderByExpression <+>
+  ") " <+> fromOrder orderByOrder <+> fromNullsOrder orderByNullsOrder
 
 fromOrder :: Order -> Printer
 fromOrder =
@@ -207,8 +207,8 @@ fromOrder =
     AscOrder -> "ASC"
     DescOrder -> "DESC"
 
-fromNullsOrder :: FieldName -> NullsOrder -> Printer
-fromNullsOrder _fieldName =
+fromNullsOrder :: NullsOrder -> Printer
+fromNullsOrder =
   \case
     NullsAnyOrder -> ""
     NullsFirst -> " NULLS FIRST"

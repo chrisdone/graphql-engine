@@ -30,7 +30,7 @@ data Reselect = Reselect
   } deriving (Eq, Show)
 
 data OrderBy = OrderBy
-  { orderByFieldName :: FieldName
+  { orderByExpression :: Expression
   , orderByOrder :: Order
   , orderByNullsOrder :: NullsOrder
   } deriving (Eq, Show)

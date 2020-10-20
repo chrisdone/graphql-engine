@@ -66,6 +66,36 @@ Aggregate query:
   SELECT AS STRUCT COUNT(*) AS `count`
   FROM `chinook`.`Album` AS `t_Album1`
 
+Order by object relation:
+
+  Album(order_by: {Artist: {Name: asc}}){
+      Title
+  }
+
+  =>
+
+  SELECT AS STRUCT `t_Album1`.`Title` AS `Title`
+  FROM `chinook`.`Album` AS `t_Album1`
+  LEFT OUTER JOIN (SELECT *
+                   FROM `chinook`.`Artist` AS `t_Artist1`)
+  AS `order_Artist1`
+  ON (((`order_Artist1`.`ArtistId`) = (`t_Album1`.`ArtistId`)))
+  ORDER BY `order_Artist1`.`Name` ASC NULLS LAST
+
+Order by aggregation:
+
+  Album(order_by: {Track_aggregate: {count: asc}}) {
+    Title
+  }
+
+  =>
+
+  SELECT AS STRUCT `t_Album1`.`Title` AS `Title`
+  FROM `chinook`.`Album` AS `t_Album1`
+  ORDER BY ((SELECT COUNT(*) AS `agg`
+            FROM `chinook`.`Track` AS `t_Track1`
+            WHERE ((`t_Track1`.`AlbumId`) = (`t_Album1`.`AlbumId`)))) ASC NULLS LAST
+
 -}
 
 module Hasura.SQL.BigQuery.FromIr
@@ -92,7 +122,7 @@ import           Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
-import           Data.Maybe
+import Data.Maybe
 import           Data.Proxy
 import           Data.Sequence (Seq)
 import           Data.Text (Text)
@@ -106,8 +136,8 @@ import qualified Hasura.RQL.Types.BoolExp as Ir
 import qualified Hasura.RQL.Types.Column as Ir
 import qualified Hasura.RQL.Types.Common as Ir
 import qualified Hasura.RQL.Types.DML as Ir
-import qualified Hasura.SQL.DML as Sql
 import           Hasura.SQL.BigQuery.Types as BigQuery
+import qualified Hasura.SQL.DML as Sql
 import qualified Hasura.SQL.Types as Sql
 import           Prelude
 
@@ -207,11 +237,10 @@ fromSelectRows annSelectG = do
        , argsTop
        , argsDistinct = Proxy
        , argsOffset
-       , argsExistingJoins
        } <- runReaderT (fromSelectArgsG args) (fromAlias selectFrom)
   fieldSources <-
     runReaderT
-      (traverse (fromAnnFieldsG argsExistingJoins stringifyNumbers) fields)
+      (traverse (fromAnnFieldsG stringifyNumbers) fields)
       (fromAlias selectFrom)
   filterExpression <-
     runReaderT (fromAnnBoolExp permFilter) (fromAlias selectFrom)
@@ -304,7 +333,6 @@ data Args = Args
   , argsTop :: Top
   , argsOffset :: Maybe Expression
   , argsDistinct :: Proxy (Maybe (NonEmpty FieldName))
-  , argsExistingJoins :: Map Sql.QualifiedTable EntityAlias
   } deriving (Show)
 
 data UnfurledJoin = UnfurledJoin
@@ -334,13 +362,9 @@ fromSelectArgsG selectArgsG = do
       Just {} -> refute (pure DistinctIsn'tSupported)
   (argsOrderBy, joins) <-
     runWriterT (traverse fromAnnOrderByItemG (maybe [] toList orders))
-  -- Any object-relation joins that we generated, we record their
-  -- generated names into a mapping.
-  let argsExistingJoins =
-        M.fromList (mapMaybe unfurledObjectTableAlias (toList joins))
   pure
     Args
-      { argsJoins = toList (fmap unfurledJoin joins)
+      { argsJoins = map unfurledJoin (toList joins)
       , argsOrderBy = NE.nonEmpty argsOrderBy
       , ..
       }
@@ -357,7 +381,7 @@ fromSelectArgsG selectArgsG = do
 fromAnnOrderByItemG ::
      Ir.AnnOrderByItemG Expression -> WriterT (Seq UnfurledJoin) (ReaderT EntityAlias FromIr) OrderBy
 fromAnnOrderByItemG Ir.OrderByItemG {obiType, obiColumn, obiNulls} = do
-  orderByFieldName <- unfurlAnnOrderByElement obiColumn
+  orderByExpression <- unfurlAnnOrderByElement obiColumn
   let morderByOrder =
         fmap
           (\case
@@ -379,76 +403,20 @@ fromAnnOrderByItemG Ir.OrderByItemG {obiType, obiColumn, obiNulls} = do
 -- that are terminated by field name (Ir.AOCColumn and
 -- Ir.AOCArrayAggregation).
 unfurlAnnOrderByElement ::
-     Ir.AnnOrderByElement Expression -> WriterT (Seq UnfurledJoin) (ReaderT EntityAlias FromIr) FieldName
+     Ir.AnnOrderByElement Expression -> WriterT (Seq UnfurledJoin) (ReaderT EntityAlias FromIr) Expression
 unfurlAnnOrderByElement =
   \case
     Ir.AOCColumn pgColumnInfo -> do
       fieldName <- lift (fromPGColumnInfo pgColumnInfo)
-      pure fieldName
+      pure (ColumnExpression fieldName)
     Ir.AOCObjectRelation Ir.RelInfo {riMapping = mapping, riRTable = table} annBoolExp annOrderByElementG -> do
       selectFrom <- lift (lift (fromQualifiedTable table))
       joinAliasEntity <-
         lift (lift (generateEntityAlias (ForOrderAlias (tableNameText table))))
       foreignKeyConditions <-
         lift (fromMapping (EntityAlias joinAliasEntity) mapping)
-      -- TODO: Because these object relations are re-used by regular
-      -- object mapping queries, this WHERE may be unnecessarily
-      -- restrictive. But I actually don't know from where such an
-      -- expression arises in the source GraphQL syntax.
-      --
-      -- Worst case scenario, we could put the WHERE in the key of the
-      -- Map in 'argsExistingJoins'. That would guarantee only equal
-      -- selects are re-used.
       whereExpression <-
         lift (local (const (fromAlias selectFrom)) (fromAnnBoolExp annBoolExp))
-      tell
-        (pure
-           UnfurledJoin
-             { unfurledJoin =
-                 LeftOuterJoin
-                   { joinSource =
-                       JoinSelect
-                         Select
-                           { selectTop = NoTop
-                           , selectProjections = NE.fromList [StarProjection]
-                           , selectFrom
-                           , selectJoins = []
-                           , selectWhere = Where [whereExpression]
-                           , selectAsStruct = NoStruct
-                           , selectOrderBy = Nothing
-                           , selectOffset = Nothing
-                           }
-                   , joinJoinAlias =
-                       JoinAlias
-                         { joinAliasEntity -- , joinAliasField = Nothing
-                         }
-                   , joinOn = AndExpression foreignKeyConditions
-                   , joinProjections = NE.fromList [StarProjection]
-                   }
-             , unfurledObjectTableAlias =
-                 Just (table, EntityAlias joinAliasEntity)
-             })
-      local
-        (const (EntityAlias joinAliasEntity))
-        (unfurlAnnOrderByElement annOrderByElementG)
-    Ir.AOCArrayAggregation Ir.RelInfo {riMapping = mapping, riRTable = table} annBoolExp annAggregateOrderBy -> do
-      selectFrom <- lift (lift (fromQualifiedTable table))
-      let alias = aggFieldName
-      joinAliasEntity <-
-        lift (lift (generateEntityAlias (ForOrderAlias (tableNameText table))))
-      foreignKeyConditions <-
-        lift (fromMapping (EntityAlias joinAliasEntity) mapping)
-      whereExpression <-
-        lift (local (const (fromAlias selectFrom)) (fromAnnBoolExp annBoolExp))
-      aggregate <-
-        lift
-          (local
-             (const (fromAlias selectFrom))
-             (case annAggregateOrderBy of
-                Ir.AAOCount -> pure (CountAggregate StarCountable)
-                Ir.AAOOp text pgColumnInfo -> do
-                  fieldName <- fromPGColumnInfo pgColumnInfo
-                  pure (OpAggregate text (pure (ColumnExpression fieldName)))))
       tell
         (pure
            (UnfurledJoin
@@ -458,14 +426,7 @@ unfurlAnnOrderByElement =
                         JoinSelect
                           Select
                             { selectTop = NoTop
-                            , selectProjections =
-                                NE.fromList
-                                  [ AggregateProjection
-                                      Aliased
-                                        { aliasedThing = aggregate
-                                        , aliasedAlias = alias
-                                        }
-                                  ]
+                            , selectProjections = NE.fromList [StarProjection]
                             , selectFrom
                             , selectJoins = []
                             , selectWhere = Where [whereExpression]
@@ -480,9 +441,44 @@ unfurlAnnOrderByElement =
                     , joinOn = AndExpression foreignKeyConditions
                     , joinProjections = NE.fromList [StarProjection]
                     }
-              , unfurledObjectTableAlias = Nothing
+              , unfurledObjectTableAlias =
+                  Just (table, EntityAlias joinAliasEntity)
               }))
-      pure FieldName {fieldNameEntity = joinAliasEntity, fieldName = alias}
+      local
+        (const (EntityAlias joinAliasEntity))
+        (unfurlAnnOrderByElement annOrderByElementG)
+    Ir.AOCArrayAggregation Ir.RelInfo {riMapping = mapping, riRTable = table} annBoolExp annAggregateOrderBy -> do
+      selectFrom <- lift (lift (fromQualifiedTable table))
+      let alias = aggFieldName
+      foreignKeyConditions <-
+        lift (fromMapping (fromAlias selectFrom) mapping)
+      whereExpression <-
+        lift (local (const (fromAlias selectFrom)) (fromAnnBoolExp annBoolExp))
+      aggregate <-
+        lift
+          (local
+             (const (fromAlias selectFrom))
+             (case annAggregateOrderBy of
+                Ir.AAOCount -> pure (CountAggregate StarCountable)
+                Ir.AAOOp text pgColumnInfo -> do
+                  fieldName <- fromPGColumnInfo pgColumnInfo
+                  pure (OpAggregate text (pure (ColumnExpression fieldName)))))
+      pure
+        (SelectExpression
+           Select
+             { selectTop = NoTop
+             , selectProjections =
+                 NE.fromList
+                   [ AggregateProjection
+                       Aliased {aliasedThing = aggregate, aliasedAlias = alias}
+                   ]
+             , selectFrom
+             , selectJoins = []
+             , selectWhere = Where (foreignKeyConditions <> [whereExpression])
+             , selectAsStruct = NoStruct
+             , selectOrderBy = Nothing
+             , selectOffset = Nothing
+             })
 
 --------------------------------------------------------------------------------
 -- Conversion functions
@@ -656,11 +652,10 @@ fromAggregateField aggregateField =
 
 -- | The main sources of fields, either constants, fields or via joins.
 fromAnnFieldsG ::
-     Map Sql.QualifiedTable EntityAlias
-  -> StringifyNumbers
+     StringifyNumbers
   -> (Ir.FieldName, Ir.AnnFieldG Expression)
   -> ReaderT EntityAlias FromIr FieldSource
-fromAnnFieldsG existingJoins stringifyNumbers (Ir.FieldName name, field) =
+fromAnnFieldsG stringifyNumbers (Ir.FieldName name, field) =
   case field of
     Ir.AFColumn annColumnField -> do
       expression <- fromAnnColumnField stringifyNumbers annColumnField
@@ -678,7 +673,7 @@ fromAnnFieldsG existingJoins stringifyNumbers (Ir.FieldName name, field) =
       fmap
         (\aliasedThing ->
            JoinFieldSource (Aliased {aliasedThing, aliasedAlias = name}))
-        (fromObjectRelationSelectG existingJoins objectRelationSelectG)
+        (fromObjectRelationSelectG objectRelationSelectG)
     Ir.AFArrayRelation arraySelectG ->
       fmap
         (\case
@@ -753,10 +748,9 @@ fieldSourceJoin =
 -- Joins
 
 fromObjectRelationSelectG ::
-     Map Sql.QualifiedTable EntityAlias
-  -> Ir.ObjectRelationSelectG Expression
+     Ir.ObjectRelationSelectG Expression
   -> ReaderT EntityAlias FromIr Join
-fromObjectRelationSelectG existingJoins annRelationSelectG = do
+fromObjectRelationSelectG annRelationSelectG = do
   joinJoinAlias <-
     do fieldName <- lift (fromRelName aarRelationshipName)
        alias <- lift (generateEntityAlias (ObjectRelationTemplate fieldName))
@@ -770,7 +764,7 @@ fromObjectRelationSelectG existingJoins annRelationSelectG = do
   fieldSources <-
     local
       (const (EntityAlias (joinAliasEntity joinJoinAlias)))
-      (traverse (fromAnnFieldsG mempty LeaveNumbersAlone) fields)
+      (traverse (fromAnnFieldsG LeaveNumbersAlone) fields)
   selectProjections <-
     case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
       Nothing -> refute (pure NoProjectionFields)
