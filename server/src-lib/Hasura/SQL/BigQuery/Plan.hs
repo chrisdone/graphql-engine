@@ -91,7 +91,7 @@ test i =
 -- Run a select query against BigQuery
 
 runSelect :: Select -> IO ()
-runSelect select = do
+runSelect select0 = do
   bigqueryaccesstoken <- getEnvUnline "BIGQUERYACCESSTOKEN"
   bigqueryapitoken <- getEnvUnline "BIGQUERYAPITOKEN"
   bigqueryprojectname <- getEnvUnline "BIGQUERYPROJECTNAME"
@@ -106,7 +106,7 @@ runSelect select = do
       body =
         encode
           (object
-             [ "query" .= toTextFlat (fromSelect select)
+             [ "query" .= toTextFlat (fromSelect select0)
              , "useLegacySql" .= False -- Important, it makes `quotes` work properly.
              ])
   L.putStrLn ("Request body:\n" <> body)
@@ -122,7 +122,7 @@ runSelect select = do
           , requestBody = RequestBodyLBS body
           }
   print request
-  httpLbs request mgr >>= L.putStr . responseBody
+  -- httpLbs request mgr >>= L.putStr . responseBody
   where
     getEnvUnline key = do
       value <- fmap (concat . take 1 . lines) (getEnv key)
@@ -345,6 +345,7 @@ multiplexRootReselect rootReselect =
     , selectAsStruct = AsStruct
     , selectOrderBy = Nothing
     , selectOffset = Nothing
+    , selectAsJson = AsJsonArray
     }
 
 resultIdAlias :: T.Text

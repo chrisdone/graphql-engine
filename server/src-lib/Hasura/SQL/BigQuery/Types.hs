@@ -15,11 +15,18 @@ data Select = Select
   , selectAsStruct :: !AsStruct
   , selectOrderBy :: !(Maybe (NonEmpty OrderBy))
   , selectOffset :: !(Maybe Expression)
+  , selectAsJson :: !AsJson
   } deriving (Eq, Show)
 
 data AsStruct
   = NoStruct
   | AsStruct
+  deriving (Eq, Show)
+
+data AsJson
+  = NoJson
+  | AsJsonSingleton
+  | AsJsonArray
   deriving (Eq, Show)
 
 data Reselect = Reselect

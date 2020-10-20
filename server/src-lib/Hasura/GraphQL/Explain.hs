@@ -4,6 +4,7 @@ module Hasura.GraphQL.Explain
   ) where
 
 import           Hasura.SQL.BigQuery.ToQuery as BigQuery
+import           Hasura.SQL.BigQuery.Types as BigQuery
 import Hasura.SQL.BigQuery.Plan as BigQuery
 import qualified Data.Aeson as J
 import qualified Data.Aeson.Casing as J
@@ -89,10 +90,16 @@ explainQueryField userInfo fieldName rootField = do
           (T.unpack . toTextPretty . fromSelect)
           (BigQuery.planNoPlan rootField)))
 
-  {-liftIO ((
+  liftIO
+    (putStrLn
+       (either
+          show
+          (T.unpack . toTextPretty . fromSelect)
+          (BigQuery.planNoPlan rootField)))
+  liftIO ((
               case BigQuery.planNoPlan rootField of
                 Left _ -> pure ()
-                Right select -> BigQuery.runSelect select))-}
+                Right select -> BigQuery.runSelect select))
   resolvedRootField <- E.traverseQueryRootField (resolveUnpreparedValue userInfo) rootField
   case resolvedRootField of
     RFRemote _ -> throw400 InvalidParams "only hasura queries can be explained"

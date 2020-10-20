@@ -132,34 +132,43 @@ fromFieldName (FieldName {..}) =
 
 fromSelect :: Select -> Printer
 fromSelect Select {..} =
-  SepByPrinter
-    NewlinePrinter
-    [ "SELECT " <+>
-      case selectAsStruct of
-        AsStruct -> "AS STRUCT " <+> IndentPrinter (7 + 10) projections
-        NoStruct -> IndentPrinter 7 projections
-    , "FROM " <+> IndentPrinter 5 (fromFrom selectFrom)
-    , SepByPrinter
+  case selectAsJson of
+    AsJsonSingleton ->
+      SepByPrinter NewlinePrinter ["SELECT TO_JSON_STRING((", inner, ")) AS `root`"]
+    AsJsonArray ->
+      SepByPrinter
         NewlinePrinter
-        (map
-           (\LeftOuterJoin {..} ->
-              SeqPrinter
-                [ "LEFT OUTER JOIN (" <+>
-                  IndentPrinter 17 (fromJoinSource joinSource) <+> ")"
-                , NewlinePrinter
-                , "AS " <+> fromJoinAlias joinJoinAlias
-                , NewlinePrinter
-                , "ON (" <+> IndentPrinter 4 (fromExpression joinOn) <+> ")"
-                ])
-           selectJoins)
-    , fromWhere selectWhere
-    , fromOrderBys selectTop selectOffset selectOrderBy
-    ]
+        ["SELECT TO_JSON_STRING(ARRAY(", inner, ")) AS `root`"]
+    NoJson -> inner
   where
     projections =
       SepByPrinter
         ("," <+> NewlinePrinter)
         (map fromProjection (toList selectProjections))
+    inner =
+      SepByPrinter
+        NewlinePrinter
+        [ "SELECT " <+>
+          case selectAsStruct of
+            AsStruct -> "AS STRUCT " <+> IndentPrinter (7 + 10) projections
+            NoStruct -> IndentPrinter 7 projections
+        , "FROM " <+> IndentPrinter 5 (fromFrom selectFrom)
+        , SepByPrinter
+            NewlinePrinter
+            (map
+               (\LeftOuterJoin {..} ->
+                  SeqPrinter
+                    [ "LEFT OUTER JOIN (" <+>
+                      IndentPrinter 17 (fromJoinSource joinSource) <+> ")"
+                    , NewlinePrinter
+                    , "AS " <+> fromJoinAlias joinJoinAlias
+                    , NewlinePrinter
+                    , "ON (" <+> IndentPrinter 4 (fromExpression joinOn) <+> ")"
+                    ])
+               selectJoins)
+        , fromWhere selectWhere
+        , fromOrderBys selectTop selectOffset selectOrderBy
+        ]
 
 fromJoinSource :: JoinSource -> Printer
 fromJoinSource =

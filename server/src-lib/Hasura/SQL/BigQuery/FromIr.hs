@@ -220,10 +220,13 @@ mkSQLSelect ::
   -> FromIr BigQuery.Select
 mkSQLSelect jsonAggSelect annSimpleSel =
   case jsonAggSelect of
-    Ir.JASMultipleRows -> fromSelectRows annSimpleSel
+    Ir.JASMultipleRows ->
+      fmap
+        (\select -> select {selectAsJson = AsJsonArray})
+        (fromSelectRows annSimpleSel)
     Ir.JASSingleObject -> do
       select <- fromSelectRows annSimpleSel
-      pure select {selectAsStruct = AsStruct, selectTop = Top 1}
+      pure select {selectAsJson = AsJsonSingleton}
 
 -- | Convert from the IR database query into a select.
 fromRootField ::
@@ -275,6 +278,7 @@ fromSelectRows annSelectG = do
       , selectWhere = argsWhere <> Where [filterExpression]
       , selectAsStruct = AsStruct
       , selectOffset = argsOffset
+      , selectAsJson = NoJson
       }
   where
     Ir.AnnSelectG { _asnFields = fields
@@ -326,6 +330,7 @@ fromSelectAggregate annSelectG = do
       , selectAsStruct = AsStruct
       , selectOrderBy = argsOrderBy
       , selectOffset = argsOffset
+      , selectAsJson = NoJson
       }
   where
     Ir.AnnSelectG { _asnFields = fields
@@ -450,6 +455,7 @@ unfurlAnnOrderByElement =
                             , selectAsStruct = NoStruct
                             , selectOrderBy = Nothing
                             , selectOffset = Nothing
+                            , selectAsJson = NoJson
                             }
                     , joinJoinAlias =
                         JoinAlias
@@ -495,6 +501,7 @@ unfurlAnnOrderByElement =
              , selectAsStruct = NoStruct
              , selectOrderBy = Nothing
              , selectOffset = Nothing
+             , selectAsJson = NoJson
              })
 
 --------------------------------------------------------------------------------
@@ -559,6 +566,7 @@ fromAnnBoolExpFld =
              , selectTop = NoTop
              , selectAsStruct = NoStruct
              , selectOffset = Nothing
+             , selectAsJson = NoJson
              })
 
 fromPGColumnInfo :: Ir.PGColumnInfo -> ReaderT EntityAlias FromIr FieldName
@@ -590,6 +598,7 @@ fromGExists Ir.GExists {_geTable, _geWhere} = do
       , selectTop = NoTop
       , selectAsStruct = NoStruct
       , selectOffset = Nothing
+      , selectAsJson = NoJson
       }
 
 --------------------------------------------------------------------------------
@@ -802,6 +811,7 @@ fromObjectRelationSelectG annRelationSelectG = do
               , selectWhere = Where [filterExpression]
               , selectAsStruct = AsStruct
               , selectOffset = Nothing
+              , selectAsJson = NoJson
               }
       , joinOn = AndExpression foreignKeyConditions
       , joinProjections = selectProjections
@@ -832,16 +842,18 @@ fromArrayAggregateSelectG ::
 fromArrayAggregateSelectG annRelationSelectG = do
   fieldName <- lift (fromRelName aarRelationshipName)
   select <- lift (fromSelectAggregate annSelectG)
-  foreignKeyConditions <- fromMapping (fromAlias (selectFrom select)) mapping
-  joinSelect <- pure select {selectWhere = selectWhere select}
   alias <- lift (generateEntityAlias (ArrayAggregateTemplate fieldName))
+  foreignKeyConditions <- fromMapping (EntityAlias alias) mapping
+  joinSelect <- pure select {selectWhere = selectWhere select}
   pure
     LeftOuterJoin
       { joinJoinAlias =
           JoinAlias
-            {joinAliasEntity = alias-- , joinAliasField = pure jsonFieldName
+            { joinAliasEntity = alias -- , joinAliasField = pure jsonFieldName
             }
-      , joinSource = JoinSelect joinSelect { selectProjections = NE.fromList [StarProjection]}
+      , joinSource =
+          JoinSelect
+            joinSelect {selectProjections = NE.fromList [StarProjection]}
       , joinOn = AndExpression foreignKeyConditions
       , joinProjections = selectProjections select -- TODO: these are in the wrong scope -- should be join alias.
       }
