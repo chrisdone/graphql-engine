@@ -142,6 +142,7 @@ import           Control.Monad.Trans.State.Strict
 import           Control.Monad.Validate
 import           Control.Monad.Writer.Strict
 import           Data.Foldable
+import Data.Function
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import           Data.List.NonEmpty (NonEmpty(..))
@@ -259,6 +260,10 @@ fromSelectRows annSelectG = do
     case from of
       Ir.FromTable qualifiedObject -> fromQualifiedTable qualifiedObject
       _ -> refute (pure (FromTypeUnsupported from))
+  table <-
+    case from of
+      Ir.FromTable qualifiedObject -> pure qualifiedObject
+      _ -> refute (pure (FromTypeUnsupported from))
   Args { argsOrderBy
        , argsWhere
        , argsJoins
@@ -268,7 +273,7 @@ fromSelectRows annSelectG = do
        } <- runReaderT (fromSelectArgsG args) (fromAlias selectFrom)
   fieldSources <-
     runReaderT
-      (traverse (fromAnnFieldsG stringifyNumbers) fields)
+      (traverse (fromAnnFieldsG table stringifyNumbers) fields)
       (fromAlias selectFrom)
   filterExpression <-
     runReaderT (fromAnnBoolExp permFilter) (fromAlias selectFrom)
@@ -276,6 +281,7 @@ fromSelectRows annSelectG = do
     case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
       Nothing -> refute (pure NoProjectionFields)
       Just ne -> pure ne
+
   pure
     Select
       { selectOrderBy = argsOrderBy
@@ -287,6 +293,7 @@ fromSelectRows annSelectG = do
       , selectAsStruct = AsStruct
       , selectOffset = argsOffset
       , selectAsJson = NoJson
+      , selectWiths = mapMaybe fieldSourceWith fieldSources
       }
   where
     Ir.AnnSelectG { _asnFields = fields
@@ -339,6 +346,7 @@ fromSelectAggregate annSelectG = do
       , selectOrderBy = argsOrderBy
       , selectOffset = argsOffset
       , selectAsJson = NoJson
+      , selectWiths = mapMaybe fieldSourceWith fieldSources
       }
   where
     Ir.AnnSelectG { _asnFields = fields
@@ -464,6 +472,7 @@ unfurlAnnOrderByElement =
                             , selectOrderBy = Nothing
                             , selectOffset = Nothing
                             , selectAsJson = NoJson
+                            , selectWiths = []
                             }
                     , joinJoinAlias =
                         JoinAlias
@@ -510,6 +519,7 @@ unfurlAnnOrderByElement =
              , selectOrderBy = Nothing
              , selectOffset = Nothing
              , selectAsJson = NoJson
+             , selectWiths = []
              })
 
 --------------------------------------------------------------------------------
@@ -529,11 +539,11 @@ fromQualifiedTable qualifiedObject = do
     (FromQualifiedTable
        (Aliased
           { aliasedThing =
-              TableName {tableName = qname, tableNameSchema = "chinook"{-schemaName-}}
+              TableName {tableName = qname, tableNameSchema = "chinook"{-schemaName-}} -- TODO: FIXME:
           , aliasedAlias = alias
           }))
   where
-    Sql.QualifiedObject { qSchema = Sql.SchemaName schemaName
+    Sql.QualifiedObject { qSchema = Sql.SchemaName _schemaName
                          -- TODO: Consider many x.y.z. in schema name.
                         , qName = Sql.TableName qname
                         } = qualifiedObject
@@ -575,7 +585,15 @@ fromAnnBoolExpFld =
              , selectAsStruct = NoStruct
              , selectOffset = Nothing
              , selectAsJson = NoJson
+             , selectWiths = []
              })
+
+fromArbitraryName :: Text -> ReaderT EntityAlias FromIr FieldName
+fromArbitraryName text = do
+  EntityAlias {entityAliasText} <- ask
+  pure
+    (FieldName
+       {fieldName = text, fieldNameEntity = entityAliasText})
 
 fromPGColumnInfo :: Ir.PGColumnInfo -> ReaderT EntityAlias FromIr FieldName
 fromPGColumnInfo Ir.PGColumnInfo {pgiColumn = pgCol} = do
@@ -607,6 +625,7 @@ fromGExists Ir.GExists {_geTable, _geWhere} = do
       , selectAsStruct = NoStruct
       , selectOffset = Nothing
       , selectAsJson = NoJson
+      , selectWiths = []
       }
 
 --------------------------------------------------------------------------------
@@ -622,6 +641,7 @@ data FieldSource
   = ExpressionFieldSource (Aliased Expression)
   | JoinFieldSource (Aliased Join)
   | AggregateFieldSource (NonEmpty (Aliased Aggregate))
+  | WithFieldSource (Aliased With)
   deriving (Eq, Show)
 
 fromTableAggregateFieldG ::
@@ -686,10 +706,11 @@ fromAggregateField aggregateField =
 
 -- | The main sources of fields, either constants, fields or via joins.
 fromAnnFieldsG ::
-     StringifyNumbers
+     Sql.QualifiedObject Sql.TableName
+  -> StringifyNumbers
   -> (Ir.FieldName, Ir.AnnFieldG Expression)
   -> ReaderT EntityAlias FromIr FieldSource
-fromAnnFieldsG stringifyNumbers (Ir.FieldName name, field) =
+fromAnnFieldsG qualifiedTable stringifyNumbers (Ir.FieldName name, field) =
   case field of
     Ir.AFColumn annColumnField -> do
       expression <- fromAnnColumnField stringifyNumbers annColumnField
@@ -711,16 +732,11 @@ fromAnnFieldsG stringifyNumbers (Ir.FieldName name, field) =
     Ir.AFArrayRelation arraySelectG ->
       fmap
         (\case
-           Left select ->
-             ExpressionFieldSource
-               Aliased
-                 { aliasedThing = ArrayExpression (SelectExpression select)
-                 -- TODO: Perhaps here is where a 'WITH' or 'ARRAY_AGG'' would work.
-                 , aliasedAlias = name
-                 }
+           Left aliasedThing ->
+             WithFieldSource Aliased {aliasedThing, aliasedAlias = name}
            Right aliasedThing ->
              JoinFieldSource (Aliased {aliasedThing, aliasedAlias = name}))
-        (fromArraySelectG arraySelectG)
+        (fromArraySelectG qualifiedTable arraySelectG)
     -- TODO:
     -- Vamshi said to ignore these three for now:
     Ir.AFNodeId {} -> refute (pure (FieldTypeUnsupportedForNow field))
@@ -756,6 +772,38 @@ fromPGCol pgCol = do
 fieldSourceProjections :: FieldSource -> NonEmpty Projection
 fieldSourceProjections =
   \case
+    WithFieldSource aliasedWith ->
+      pure
+        (ExpressionProjection
+           (fmap
+              (\with ->
+                 -- TODO: This has to be replaced with A (see right)
+                 -- and the join put elsewhere
+                 SelectExpression
+                   Select
+                     { selectTop = NoTop
+                     , selectProjections =
+                         NE.fromList
+                           [ FieldNameProjection
+                               (fmap (const (withFieldName with)) aliasedWith)
+                           ]
+                     , selectFrom = FromWith (withEntityAlias with)
+                     , selectJoins =
+                         [ LeftOuterJoin
+                             { joinSource = _
+                             , joinJoinAlias = _
+                             , joinOn = _
+                             , joinProjections = _
+                             }
+                         ]
+                     , selectWhere = Where (withForeignConditions with)
+                     , selectAsStruct = NoStruct
+                     , selectOrderBy = Nothing
+                     , selectOffset = Nothing
+                     , selectAsJson = NoJson
+                     , selectWiths = []
+                     })
+              aliasedWith))
     ExpressionFieldSource aliasedExpression ->
       pure (ExpressionProjection aliasedExpression)
     JoinFieldSource aliasedJoin ->
@@ -765,7 +813,8 @@ fieldSourceProjections =
               { aliasedThing =
                   ReselectExpression
                     Reselect
-                      { reselectProjections = joinProjections (aliasedThing aliasedJoin)
+                      { reselectProjections =
+                          joinProjections (aliasedThing aliasedJoin)
                       , reselectWhere = Where []
                       , reselectAsStruct = AsStruct
                       }
@@ -778,6 +827,15 @@ fieldSourceJoin =
     JoinFieldSource aliasedJoin -> pure (aliasedThing aliasedJoin)
     ExpressionFieldSource {} -> Nothing
     AggregateFieldSource {} -> Nothing
+    WithFieldSource {} -> Nothing -- TODO: this should also produce a side join B (see right)
+
+fieldSourceWith :: FieldSource -> Maybe With
+fieldSourceWith =
+  \case
+    JoinFieldSource {} -> Nothing
+    ExpressionFieldSource {} -> Nothing
+    AggregateFieldSource {} -> Nothing
+    WithFieldSource with -> pure (aliasedThing with)
 
 --------------------------------------------------------------------------------
 -- Joins
@@ -799,7 +857,7 @@ fromObjectRelationSelectG annRelationSelectG = do
   fieldSources <-
     local
       (const (EntityAlias (joinAliasEntity joinJoinAlias)))
-      (traverse (fromAnnFieldsG LeaveNumbersAlone) fields)
+      (traverse (fromAnnFieldsG tableFrom LeaveNumbersAlone) fields)
   selectProjections <-
     case NE.nonEmpty (concatMap (toList . fieldSourceProjections) fieldSources) of
       Nothing -> refute (pure NoProjectionFields)
@@ -821,6 +879,7 @@ fromObjectRelationSelectG annRelationSelectG = do
               , selectAsStruct = AsStruct
               , selectOffset = Nothing
               , selectAsJson = NoJson
+              , selectWiths = mapMaybe fieldSourceWith fieldSources
               }
       , joinOn = AndExpression foreignKeyConditions
       , joinProjections = selectProjections
@@ -835,11 +894,14 @@ fromObjectRelationSelectG annRelationSelectG = do
                           , aarAnnSelect = annObjectSelectG :: Ir.AnnObjectSelectG Expression
                           } = annRelationSelectG
 
-fromArraySelectG :: Ir.ArraySelectG Expression -> ReaderT EntityAlias FromIr (Either Select Join)
-fromArraySelectG =
+fromArraySelectG ::
+     Sql.QualifiedObject Sql.TableName
+  -> Ir.ArraySelectG Expression
+  -> ReaderT EntityAlias FromIr (Either With Join)
+fromArraySelectG fromTable =
   \case
     Ir.ASSimple arrayRelationSelectG ->
-      fmap Left (fromArrayRelationSelectG arrayRelationSelectG)
+      fmap Left (fromArrayRelationSelectG fromTable arrayRelationSelectG)
     Ir.ASAggregate arrayAggregateSelectG ->
       fmap Right (fromArrayAggregateSelectG arrayAggregateSelectG)
     select@Ir.ASConnection {} ->
@@ -872,25 +934,69 @@ fromArrayAggregateSelectG annRelationSelectG = do
                           , aarAnnSelect = annSelectG
                           } = annRelationSelectG
 
-fromArrayRelationSelectG :: Ir.ArrayRelationSelectG Expression -> ReaderT EntityAlias FromIr Select
-fromArrayRelationSelectG annRelationSelectG = do
-  {-fieldName <- lift (fromRelName aarRelationshipName)-}
-  select <- lift (fromSelectRows annSelectG)
-  joinSelect <-
-    do foreignKeyConditions <- fromMapping (fromAlias (selectFrom select)) mapping
-       pure
-         select {selectWhere = Where foreignKeyConditions <> selectWhere select}
-  {-alias <- lift (generateEntityAlias (ArrayRelationTemplate fieldName))-}
+fromArrayRelationSelectG ::
+     Sql.QualifiedObject Sql.TableName
+  -> Ir.ArrayRelationSelectG Expression
+  -> ReaderT EntityAlias FromIr With
+fromArrayRelationSelectG remoteTable annRelationSelectG = do
+  withInnerSelect <- lift (fromSelectRows annSelectG)
+  withOuterFrom <- lift (fromQualifiedTable remoteTable)
+  innerForeignConditions <-
+    local
+      (const (fromAlias (selectFrom withInnerSelect)))
+      (fromMappingPairs (fromAlias withOuterFrom) mapping)
+  aliasText <-
+    do fieldName <- lift (fromRelName aarRelationshipName)
+       lift (generateEntityAlias (ArrayRelationTemplate fieldName))
+  let fieldNameText = aliasText <> "_array"
+  withFieldName <-
+    local (const (EntityAlias aliasText)) (fromArbitraryName fieldNameText)
+  let withEntityAlias = EntityAlias aliasText
+  foreignConditions <- fromMapping withEntityAlias mapping
+  let arrayProjection =
+        ExpressionProjection
+          Aliased
+            { aliasedThing =
+                ArrayExpression
+                  (SelectExpression
+                     withInnerSelect
+                       { selectWhere =
+                           Where (map pairToEqual innerForeignConditions) <>
+                           selectWhere withInnerSelect
+                       })
+            , aliasedAlias = fieldNameText
+            }
+      joinFieldProjections =
+        map
+          (\(outerField, _inner) ->
+             FieldNameProjection
+               Aliased
+                 { aliasedThing = outerField
+                 , aliasedAlias = fieldName outerField
+                 })
+          innerForeignConditions
   pure
-    joinSelect
-    {-Join
-      { joinJoinAlias =
-          JoinAlias
-            {joinAliasEntity = alias, joinAliasField = pure jsonFieldName}
-      , joinSource = JoinSelect joinSelect
-      }-}
+    With
+      { withEntityAlias
+      , withFieldName
+      , withSelect =
+          Select
+            { selectTop = NoTop
+            , selectProjections = NE.reverse (arrayProjection :| joinFieldProjections)
+            , selectFrom = withOuterFrom
+            , selectJoins = mempty
+            , selectWhere = mempty
+            , selectAsStruct = AsStruct
+            , selectOrderBy = Nothing
+            , selectOffset = Nothing
+            , selectAsJson = NoJson
+            , selectWiths = mempty
+            }
+      , withCardinality = Plural
+      , withForeignConditions = foreignConditions
+      }
   where
-    Ir.AnnRelationSelectG { aarRelationshipName = _
+    Ir.AnnRelationSelectG { aarRelationshipName
                           , aarColumnMapping = mapping :: HashMap Sql.PGCol Sql.PGCol
                           , aarAnnSelect = annSelectG
                           } = annRelationSelectG
@@ -909,20 +1015,32 @@ fromRelName relName =
 -- The left/right columns in @HashMap Sql.PGCol Sql.PGCol@ corresponds
 -- to the left/right of @select ... join ...@. Therefore left=remote,
 -- right=local in this context.
+fromMappingPairs ::
+     EntityAlias
+  -> HashMap Sql.PGCol Sql.PGCol
+  -> ReaderT (EntityAlias {-remote-}) FromIr [(FieldName,FieldName)]
+fromMappingPairs localAlias =
+  traverse
+    (\(remotePgCol, localPgCol) -> do
+       localFieldName <- local (const localAlias) (fromPGCol localPgCol)
+       remoteFieldName <- fromPGCol remotePgCol
+       pure
+         (localFieldName,
+         remoteFieldName)) .
+  HM.toList
+
+-- | Same as fromMappingPairs, but producing an equality expression.
 fromMapping ::
      EntityAlias
   -> HashMap Sql.PGCol Sql.PGCol
-  -> ReaderT EntityAlias FromIr [Expression]
+  -> ReaderT (EntityAlias {-remote-}) FromIr [Expression]
 fromMapping alias =
-  traverse
-    (\(remotePgCol, localPgCol) -> do
-       localFieldName <- local (const alias) (fromPGCol localPgCol)
-       remoteFieldName <- fromPGCol remotePgCol
-       pure
-         (EqualExpression
-            (ColumnExpression localFieldName)
-            (ColumnExpression remoteFieldName))) .
-  HM.toList
+  fmap (map pairToEqual) .
+  fromMappingPairs alias
+
+-- | A pair of field names to equality expression x=y.
+pairToEqual :: (FieldName, FieldName) -> Expression
+pairToEqual = uncurry (on EqualExpression ColumnExpression)
 
 --------------------------------------------------------------------------------
 -- Basic SQL expression types
@@ -1054,3 +1172,4 @@ generateEntityAlias template = do
 fromAlias :: From -> EntityAlias
 fromAlias (FromQualifiedTable Aliased {aliasedAlias}) = EntityAlias aliasedAlias
 fromAlias (FromOpenJson Aliased {aliasedAlias}) = EntityAlias aliasedAlias
+fromAlias (FromWith alias) = alias

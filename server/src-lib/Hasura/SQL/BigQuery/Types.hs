@@ -16,6 +16,20 @@ data Select = Select
   , selectOrderBy :: !(Maybe (NonEmpty OrderBy))
   , selectOffset :: !(Maybe Expression)
   , selectAsJson :: !AsJson
+  , selectWiths :: ![With]
+  } deriving (Eq, Show)
+
+data Cardinality
+  = Singular
+  | Plural
+  deriving (Eq, Show)
+
+data With = With
+  { withSelect :: Select
+  , withCardinality :: Cardinality
+  , withEntityAlias :: EntityAlias
+  , withFieldName :: FieldName
+  , withForeignConditions :: [Expression]
   } deriving (Eq, Show)
 
 data AsStruct
@@ -165,6 +179,7 @@ data Countable
 data From
   = FromQualifiedTable (Aliased TableName)
   | FromOpenJson (Aliased OpenJson)
+  | FromWith EntityAlias
   deriving (Eq, Show)
 
 data OpenJson = OpenJson

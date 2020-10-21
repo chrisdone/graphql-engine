@@ -89,13 +89,6 @@ explainQueryField userInfo fieldName rootField = do
           show
           (T.unpack . toTextPretty . fromSelect)
           (BigQuery.planNoPlan rootField)))
-
-  liftIO
-    (putStrLn
-       (either
-          show
-          (T.unpack . toTextPretty . fromSelect)
-          (BigQuery.planNoPlan rootField)))
   liftIO ((
               case BigQuery.planNoPlan rootField of
                 Left _ -> pure ()

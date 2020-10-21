@@ -1,0 +1,52 @@
+-- correlated queries issue;
+
+WITH `ar_Album1` AS
+     (SELECT AS STRUCT `t_Artist2`.`ArtistId` AS `ArtistId`,
+                       ARRAY((WITH `ar_Track1` AS
+                                   (SELECT AS STRUCT `t_Album2`.`AlbumId` AS `AlbumId`,
+                                                     ARRAY((SELECT AS STRUCT `t_Track1`.`Name` AS `Name`
+                                                            FROM `chinook`.`Track` AS `t_Track1`
+                                                            WHERE ((`t_Album2`.`AlbumId`) = (`t_Track1`.`AlbumId`)))) AS `ar_Track1_array`
+                                    FROM `chinook`.`Album` AS `t_Album2`)
+                              SELECT AS STRUCT `t_Album1`.`Title` AS `Title`,
+                                               (SELECT `ar_Track1`.`ar_Track1_array` AS `Track`
+                                                FROM `ar_Track1`
+                                                WHERE ((`ar_Track1`.`AlbumId`) = (`t_Album1`.`AlbumId`))) AS `Track`
+                              FROM `chinook`.`Album` AS `t_Album1`
+                              WHERE ((`t_Artist2`.`ArtistId`) = (`t_Album1`.`ArtistId`)))) AS `ar_Album1_array`
+      FROM `chinook`.`Artist` AS `t_Artist2`)
+SELECT TO_JSON_STRING(ARRAY(
+  SELECT AS STRUCT `t_Artist1`.`Name` AS `Name`,
+                   (SELECT `ar_Album1`.`ar_Album1_array` AS `Album`
+                    FROM `ar_Album1`
+                    WHERE ((`ar_Album1`.`ArtistId`) = (`t_Artist1`.`ArtistId`))) AS `Album`
+  FROM `chinook`.`Artist` AS `t_Artist1`
+)) AS `root`
+
+-- left outer join issue not occurring:
+
+WITH
+`ar_Track1` AS
+                                   (SELECT AS STRUCT `t_Album2`.`AlbumId` AS `AlbumId`,
+                                                     ARRAY((SELECT AS STRUCT `t_Track1`.`Name` AS `Name`
+                                                            FROM `chinook`.`Track` AS `t_Track1`
+                                                            WHERE ((`t_Album2`.`AlbumId`) = (`t_Track1`.`AlbumId`)))) AS `ar_Track1_array`
+                                    FROM `chinook`.`Album` AS `t_Album2`)
+
+,`ar_Album1` AS
+     (SELECT AS STRUCT `t_Artist2`.`ArtistId` AS `ArtistId`,
+                       ARRAY((SELECT AS STRUCT `t_Album1`.`Title` AS `Title`,
+          ------------------------- A:
+                                    ar_Track1.ar_Track1_array AS `Track`
+                              FROM `chinook`.`Album` AS `t_Album1`
+          ------------------------- B:
+                              left outer join ar_Track1 using (AlbumId)
+                              WHERE ((`t_Artist2`.`ArtistId`) = (`t_Album1`.`ArtistId`)))) AS `ar_Album1_array`
+      FROM `chinook`.`Artist` AS `t_Artist2`)
+SELECT TO_JSON_STRING(ARRAY(
+  SELECT AS STRUCT `t_Artist1`.`Name` AS `Name`,
+                   (SELECT `ar_Album1`.`ar_Album1_array` AS `Album`
+                    FROM `ar_Album1`
+                    WHERE ((`ar_Album1`.`ArtistId`) = (`t_Artist1`.`ArtistId`))) AS `Album`
+  FROM `chinook`.`Artist` AS `t_Artist1`
+)) AS `root`

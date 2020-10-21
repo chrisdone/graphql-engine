@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 -- | Planning BigQuery queries and subscriptions.
 
 module Hasura.SQL.BigQuery.Plan
@@ -14,7 +15,6 @@ import           Control.Monad.Trans.State.Strict
 import           Control.Monad.Validate
 import           Data.Aeson (encode, object, (.=))
 import           Data.Bifunctor
-import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as S8
 import qualified Data.ByteString.Lazy as L
 import           Data.Functor
@@ -25,7 +25,6 @@ import           Data.Int
 import           Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
-import           Data.Void
 import qualified Hasura.GraphQL.Context as Graphql
 import qualified Hasura.GraphQL.Execute.Query as Query
 import qualified Hasura.GraphQL.Parser.Column as Graphql
@@ -33,7 +32,6 @@ import qualified Hasura.GraphQL.Parser.Schema as PS
 import qualified Hasura.SQL.BigQuery.FromIr as BigQuery
 import qualified Hasura.SQL.BigQuery.FromIr as FromIr
 import           Hasura.SQL.BigQuery.ToQuery
-import           Hasura.SQL.BigQuery.ToQuery as BigQuery
 import           Hasura.SQL.BigQuery.Types as BigQuery
 import qualified Hasura.SQL.DML as Sql
 import qualified Hasura.SQL.Types as Sql
@@ -109,7 +107,7 @@ runSelect select0 = do
              [ "query" .= toTextFlat (fromSelect select0)
              , "useLegacySql" .= False -- Important, it makes `quotes` work properly.
              ])
-  L.putStrLn ("Request body:\n" <> body)
+  {-L.putStrLn ("Request body:\n" <> body)-}
   let request =
         req
           { requestHeaders =
@@ -121,7 +119,8 @@ runSelect select0 = do
           , method = "POST"
           , requestBody = RequestBodyLBS body
           }
-  print request
+  {-print request-}
+  pure ()
   -- httpLbs request mgr >>= L.putStr . responseBody
   where
     getEnvUnline key = do
@@ -296,6 +295,7 @@ multiplexRootReselect :: BigQuery.Reselect -> BigQuery.Select
 multiplexRootReselect rootReselect =
   Select
     { selectTop = NoTop
+    , selectWiths = []
     , selectProjections =
         NE.fromList
           [ FieldNameProjection

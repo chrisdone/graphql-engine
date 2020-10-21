@@ -130,17 +130,39 @@ fromFieldName :: FieldName -> Printer
 fromFieldName (FieldName {..}) =
   fromNameText fieldNameEntity <+> "." <+> fromNameText fieldName
 
+fromWith :: With -> Printer
+fromWith With {..} =
+  SepByPrinter
+    NewlinePrinter
+    [ fromEntityAlias withEntityAlias <+> " AS"
+    , IndentPrinter 1 ("(" <+> fromSelect withSelect <+> ")")
+    ]
+
 fromSelect :: Select -> Printer
 fromSelect Select {..} =
-  case selectAsJson of
-    AsJsonSingleton ->
-      SepByPrinter NewlinePrinter ["SELECT TO_JSON_STRING((", inner, ")) AS `root`"]
-    AsJsonArray ->
+  case selectWiths of
+    [] -> finalExpression
+    withs ->
       SepByPrinter
         NewlinePrinter
-        ["SELECT TO_JSON_STRING(ARRAY(", inner, ")) AS `root`"]
-    NoJson -> inner
+        ([ "WITH " <+>
+           IndentPrinter
+             5
+             (SepByPrinter ("," <+> NewlinePrinter) (map fromWith withs))
+         , finalExpression
+         ])
   where
+    finalExpression =
+      case selectAsJson of
+        AsJsonSingleton ->
+          "SELECT TO_JSON_STRING((" <+>
+          inner' <+> NewlinePrinter <+> "))" <+> " AS `root`"
+        AsJsonArray ->
+          "SELECT TO_JSON_STRING(ARRAY(" <+>
+          inner' <+> NewlinePrinter <+> ")) AS `root`"
+        NoJson -> inner
+      where
+        inner' = IndentPrinter 2 (NewlinePrinter <+> inner)
     projections =
       SepByPrinter
         ("," <+> NewlinePrinter)
@@ -297,6 +319,7 @@ fromFrom =
     FromQualifiedTable aliasedQualifiedTableName ->
       fromAliased (fmap fromTableName aliasedQualifiedTableName)
     FromOpenJson openJson -> fromAliased (fmap fromOpenJson openJson)
+    FromWith entityAlias -> fromEntityAlias entityAlias
 
 fromOpenJson :: OpenJson -> Printer
 fromOpenJson OpenJson {openJsonExpression, openJsonWith} =
