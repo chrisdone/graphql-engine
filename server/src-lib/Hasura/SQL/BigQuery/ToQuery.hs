@@ -180,8 +180,8 @@ fromSelect Select {..} =
             (map
                (\LeftOuterJoin {..} ->
                   SeqPrinter
-                    [ "LEFT OUTER JOIN (" <+>
-                      IndentPrinter 17 (fromJoinSource joinSource) <+> ")"
+                    [ "LEFT OUTER JOIN " <+>
+                      IndentPrinter 16 (fromJoinSource joinSource)
                     , NewlinePrinter
                     , "AS " <+> fromJoinAlias joinJoinAlias
                     , NewlinePrinter
@@ -195,8 +195,9 @@ fromSelect Select {..} =
 fromJoinSource :: JoinSource -> Printer
 fromJoinSource =
   \case
-    JoinSelect select -> fromSelect select
-    JoinReselect reselect -> fromReselect reselect
+    JoinSelect select -> "(" <+> fromSelect select <+> ")"
+    JoinReselect reselect -> "(" <+> fromReselect reselect <+> ")"
+    JoinWithEntity entity -> fromEntityAlias entity
 
 fromReselect :: Reselect -> Printer
 fromReselect Reselect {..} =

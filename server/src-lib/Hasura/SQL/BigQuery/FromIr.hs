@@ -774,36 +774,15 @@ fieldSourceProjections =
   \case
     WithFieldSource aliasedWith ->
       pure
-        (ExpressionProjection
-           (fmap
-              (\with ->
-                 -- TODO: This has to be replaced with A (see right)
-                 -- and the join put elsewhere
-                 SelectExpression
-                   Select
-                     { selectTop = NoTop
-                     , selectProjections =
-                         NE.fromList
-                           [ FieldNameProjection
-                               (fmap (const (withFieldName with)) aliasedWith)
-                           ]
-                     , selectFrom = FromWith (withEntityAlias with)
-                     , selectJoins =
-                         [ LeftOuterJoin
-                             { joinSource = _
-                             , joinJoinAlias = _
-                             , joinOn = _
-                             , joinProjections = _
-                             }
-                         ]
-                     , selectWhere = Where (withForeignConditions with)
-                     , selectAsStruct = NoStruct
-                     , selectOrderBy = Nothing
-                     , selectOffset = Nothing
-                     , selectAsJson = NoJson
-                     , selectWiths = []
-                     })
-              aliasedWith))
+        ((FieldNameProjection
+            (fmap
+               (\with ->
+                  (withFieldName with)
+                    { fieldNameEntity =
+                        let EntityAlias t = withEntityAlias with
+                         in t
+                    })
+               aliasedWith)))
     ExpressionFieldSource aliasedExpression ->
       pure (ExpressionProjection aliasedExpression)
     JoinFieldSource aliasedJoin ->
@@ -827,7 +806,21 @@ fieldSourceJoin =
     JoinFieldSource aliasedJoin -> pure (aliasedThing aliasedJoin)
     ExpressionFieldSource {} -> Nothing
     AggregateFieldSource {} -> Nothing
-    WithFieldSource {} -> Nothing -- TODO: this should also produce a side join B (see right)
+    -- TODO: this should also produce a side join B (see right)
+    WithFieldSource (Aliased {aliasedThing = with}) ->
+      pure
+        LeftOuterJoin
+          { joinSource = JoinWithEntity (withEntityAlias with)
+          , joinJoinAlias =
+              JoinAlias
+                { joinAliasEntity =
+                    let EntityAlias t = withEntityAlias with
+                     in t
+                }
+          , joinOn = AndExpression (withForeignConditions with)
+          -- TODO: this is weird, remove it or make sense of it.
+          , joinProjections = NE.fromList [StarProjection]
+          }
 
 fieldSourceWith :: FieldSource -> Maybe With
 fieldSourceWith =

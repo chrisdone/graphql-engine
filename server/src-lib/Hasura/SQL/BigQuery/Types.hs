@@ -93,6 +93,7 @@ data Join = LeftOuterJoin
 data JoinSource
   = JoinSelect Select
   | JoinReselect Reselect
+  | JoinWithEntity EntityAlias
   deriving (Eq, Show)
 
 data JoinAlias = JoinAlias
