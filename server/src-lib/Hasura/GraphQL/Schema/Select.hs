@@ -49,7 +49,7 @@ import qualified Hasura.RQL.IR.Select                  as IR
 import           Hasura.Backends.Postgres.SQL.Types
 import           Hasura.Backends.Postgres.SQL.Value
 import           Hasura.GraphQL.Parser                 (FieldParser, InputFieldsParser, Kind (..),
-                                                        Parser, UnpreparedValue (..), mkParameter)
+                                                        Parser, UnpreparedValue, GUnpreparedValue (..), mkParameter)
 import           Hasura.GraphQL.Parser.Class
 import           Hasura.GraphQL.Parser.Schema          (toGraphQLType)
 import           Hasura.GraphQL.Schema.BoolExp

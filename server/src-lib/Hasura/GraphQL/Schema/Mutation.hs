@@ -30,7 +30,7 @@ import qualified Hasura.RQL.IR.Update                as IR
 
 import           Hasura.Backends.Postgres.SQL.Types
 import           Hasura.GraphQL.Parser               (FieldParser, InputFieldsParser, Kind (..),
-                                                      Parser, UnpreparedValue (..), mkParameter)
+                                                      Parser, UnpreparedValue, GUnpreparedValue (..), mkParameter)
 import           Hasura.GraphQL.Parser.Class
 import           Hasura.GraphQL.Schema.BoolExp
 import           Hasura.GraphQL.Schema.Common

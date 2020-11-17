@@ -21,7 +21,7 @@ import           Data.Text.NonEmpty
 import           Hasura.Backends.Postgres.SQL.Types
 import           Hasura.Backends.Postgres.SQL.Value
 import           Hasura.GraphQL.Parser                 (FieldParser, InputFieldsParser, Kind (..),
-                                                        Parser, UnpreparedValue (..))
+                                                        Parser, UnpreparedValue)
 import           Hasura.GraphQL.Parser.Class
 import           Hasura.GraphQL.Schema.Common
 import           Hasura.GraphQL.Schema.Select

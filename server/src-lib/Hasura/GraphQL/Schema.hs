@@ -25,7 +25,7 @@ import           Hasura.Backends.Postgres.SQL.Types
 import           Hasura.GraphQL.Context
 import           Hasura.GraphQL.Execute.Types
 import           Hasura.GraphQL.Parser                 (Kind (..), Parser, Schema (..),
-                                                        UnpreparedValue (..))
+                                                        UnpreparedValue)
 import           Hasura.GraphQL.Parser.Class
 import           Hasura.GraphQL.Parser.Internal.Parser (FieldParser (..))
 import           Hasura.GraphQL.Schema.Action

@@ -473,6 +473,8 @@ library
                      , Hasura.GraphQL.Parser.Class.Parse
                      , Hasura.GraphQL.Parser.Collect
                      , Hasura.GraphQL.Parser.Column
+                     , Hasura.Backends.Postgres.Column
+                     , Hasura.GraphQL.Parser.Column.Interface
                      , Hasura.GraphQL.Parser.Internal.Parser
                      , Hasura.GraphQL.Parser.Internal.Types
                      , Hasura.GraphQL.Parser.Monad

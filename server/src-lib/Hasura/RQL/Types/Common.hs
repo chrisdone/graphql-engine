@@ -80,8 +80,10 @@ import           Language.Haskell.TH.Syntax         (Lift)
 
 import qualified Hasura.Backends.Postgres.SQL.DML   as PG
 import qualified Hasura.Backends.Postgres.SQL.Types as PG
+import qualified Hasura.Backends.Postgres.SQL.Value as PG
 
 import qualified Hasura.Backends.MSSQL.Types as MSSQL
+import qualified Database.ODBC.SQLServer as Odbc
 
 import           Hasura.EncJSON
 import           Hasura.Incremental                 (Cacheable)
@@ -153,6 +155,7 @@ class
   type SQLOperator    b :: Type
   type XAILIKE        b :: Type
   type XANILIKE       b :: Type
+  type ScalarValue    b :: Type
 
 instance Backend 'Postgres where
   type Identifier     'Postgres = PG.Identifier
@@ -165,6 +168,7 @@ instance Backend 'Postgres where
   type CountType      'Postgres = PG.CountType
   type Column         'Postgres = PG.PGCol
   type ScalarType     'Postgres = PG.PGScalarType
+  type ScalarValue    'Postgres = PG.PGScalarValue
   type SQLExpression  'Postgres = PG.SQLExp
   type SQLOperator    'Postgres = PG.SQLOp
   type XAILIKE        'Postgres = ()
@@ -181,6 +185,7 @@ instance Backend 'MSSQL where
   type CountType      'MSSQL = MSSQL.Countable
   type Column         'MSSQL = MSSQL.ColumnName
   type ScalarType     'MSSQL = MSSQL.ScalarType
+  type ScalarValue    'MSSQL = Odbc.Value
   type SQLExpression  'MSSQL = MSSQL.Expression
   type SQLOperator    'MSSQL = ()
   type XAILIKE        'MSSQL = ()
